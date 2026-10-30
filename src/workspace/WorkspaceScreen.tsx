@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api";
-import type { ExplorerLayout, Workspace } from "../api";
+import type { ExplorerLayout, FileEntry, NoteFormat, Workspace } from "../api";
 import { FileExplorer } from "../explorer/FileExplorer";
 import { TopBar } from "./TopBar";
 
@@ -9,6 +9,34 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   // Mirrors `layout`, so menu events always change the latest layout.
   const layoutRef = useRef<ExplorerLayout | null>(null);
   const [hovering, setHovering] = useState(false);
+  const [files, setFiles] = useState<FileEntry[] | null>(null);
+  const [filesError, setFilesError] = useState<string>();
+  const [newNotePath, setNewNotePath] = useState<string>();
+  const [problem, setProblem] = useState<string>();
+
+  async function loadFiles() {
+    try {
+      setFiles(await api.listFiles());
+      setFilesError(undefined);
+    } catch (error) {
+      setFilesError(String(error));
+    }
+  }
+
+  useEffect(() => {
+    loadFiles();
+  }, []);
+
+  async function newNote(format?: NoteFormat) {
+    try {
+      const path = format ? await api.createNote(format) : await api.createNote();
+      setProblem(undefined);
+      setNewNotePath(path);
+      await loadFiles();
+    } catch (error) {
+      setProblem(`Couldn't create the note: ${error}`);
+    }
+  }
 
   function showLayout(next: ExplorerLayout) {
     layoutRef.current = next;
@@ -33,6 +61,8 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
 
   useEffect(() => {
     const unlisten = api.onMenuAction((action) => {
+      if (action === "new-note") newNote();
+      if (action === "new-markdown-note") newNote("markdown");
       if (action === "toggle-explorer-pinned") togglePinned();
       if (action === "move-explorer-to-other-side") moveToOtherSide();
     });
@@ -44,7 +74,14 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   // Don't show anything until we know where the explorer goes, so it doesn't jump.
   if (!layout) return null;
 
-  const explorerProps = { layout, onTogglePinned: togglePinned };
+  const explorerProps = {
+    layout,
+    files,
+    error: filesError,
+    highlightedPath: newNotePath,
+    onTogglePinned: togglePinned,
+    onNewNote: () => newNote(),
+  };
 
   return (
     <div className="flex h-screen flex-col bg-white">
@@ -70,7 +107,16 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
             <FileExplorer {...explorerProps} floating visible={hovering} />
           </div>
         )}
-        <main className="flex-1 overflow-auto p-6" />
+        <main className="relative flex-1 overflow-auto p-6">
+          {problem && (
+            <p
+              role="alert"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-white px-4 py-2 text-sm text-red-600 shadow-[0_2px_12px_rgba(0,0,0,0.08)]"
+            >
+              {problem}
+            </p>
+          )}
+        </main>
       </div>
     </div>
   );

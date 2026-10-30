@@ -16,6 +16,7 @@ export function setUpFakeBackend() {
   vi.mocked(api.listFiles).mockResolvedValue([]);
   vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "pinned" });
   vi.mocked(api.saveExplorerLayout).mockResolvedValue();
+  vi.mocked(api.createNote).mockResolvedValue("Untitled.typ");
   vi.mocked(api.onMenuAction).mockImplementation(async (handler) => {
     menuHandlers.push(handler);
     return () => {
@@ -25,6 +26,8 @@ export function setUpFakeBackend() {
 }
 
 const menuItems = {
+  "File › New Note": "new-note",
+  "File › New Markdown Note": "new-markdown-note",
   "File › Close Workspace": "close-workspace",
   "View › Pin File Explorer": "toggle-explorer-pinned",
   "View › Move File Explorer to Other Side": "move-explorer-to-other-side",

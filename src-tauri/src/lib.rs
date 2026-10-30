@@ -1,10 +1,12 @@
 pub mod files;
 pub mod layout;
 mod menu;
+pub mod notes;
 pub mod workspace;
 
 use files::FileEntry;
 use layout::{ExplorerLayout, ExplorerMode};
+use notes::NoteFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
@@ -93,6 +95,13 @@ fn save_explorer_layout(
     Ok(())
 }
 
+/// Creates an empty note at the top of the workspace (Typst unless another format is asked for)
+/// and returns its path relative to the workspace.
+#[tauri::command]
+fn create_note(current: State<CurrentWorkspace>, format: Option<NoteFormat>) -> Result<String, String> {
+    notes::create_note(&current.path()?, format.unwrap_or_default()).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -112,7 +121,8 @@ pub fn run() {
             get_recent_workspaces,
             list_files,
             get_explorer_layout,
-            save_explorer_layout
+            save_explorer_layout,
+            create_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

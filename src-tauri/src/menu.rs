@@ -4,14 +4,24 @@
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
+const NEW_NOTE: &str = "new-note";
+const NEW_MARKDOWN_NOTE: &str = "new-markdown-note";
 const CLOSE_WORKSPACE: &str = "close-workspace";
 const TOGGLE_EXPLORER_PINNED: &str = "toggle-explorer-pinned";
 const MOVE_EXPLORER_TO_OTHER_SIDE: &str = "move-explorer-to-other-side";
 
-const ACTIONS: [&str; 3] = [CLOSE_WORKSPACE, TOGGLE_EXPLORER_PINNED, MOVE_EXPLORER_TO_OTHER_SIDE];
+const ACTIONS: [&str; 5] = [
+    NEW_NOTE,
+    NEW_MARKDOWN_NOTE,
+    CLOSE_WORKSPACE,
+    TOGGLE_EXPLORER_PINNED,
+    MOVE_EXPLORER_TO_OTHER_SIDE,
+];
 
 /// Items that only make sense while a workspace is open.
 struct WorkspaceItems {
+    new_note: MenuItem<Wry>,
+    new_markdown_note: MenuItem<Wry>,
     close: MenuItem<Wry>,
     pin_explorer: CheckMenuItem<Wry>,
     move_explorer: MenuItem<Wry>,
@@ -21,6 +31,14 @@ struct WorkspaceItems {
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::default(app)?;
     let items = WorkspaceItems {
+        new_note: MenuItem::with_id(app, NEW_NOTE, "New Note", false, Some("CmdOrCtrl+N"))?,
+        new_markdown_note: MenuItem::with_id(
+            app,
+            NEW_MARKDOWN_NOTE,
+            "New Markdown Note",
+            false,
+            None::<&str>,
+        )?,
         close: MenuItem::with_id(app, CLOSE_WORKSPACE, "Close Workspace", false, None::<&str>)?,
         pin_explorer: CheckMenuItem::with_id(
             app,
@@ -40,8 +58,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     };
 
     let file = find_or_add_submenu(app, &menu, "File", None)?;
-    file.insert(&items.close, 0)?;
-    file.insert(&PredefinedMenuItem::separator(app)?, 1)?;
+    file.insert(&items.new_note, 0)?;
+    file.insert(&items.new_markdown_note, 1)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+    file.insert(&items.close, 3)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 4)?;
 
     let view = find_or_add_submenu(app, &menu, "View", Some("Edit"))?;
     view.insert(&items.pin_explorer, 0)?;
@@ -83,6 +104,8 @@ pub fn handle_event(app: &AppHandle, id: &str) {
 
 pub fn set_workspace_open(app: &AppHandle, open: bool) {
     if let Some(items) = app.try_state::<WorkspaceItems>() {
+        let _ = items.new_note.set_enabled(open);
+        let _ = items.new_markdown_note.set_enabled(open);
         let _ = items.close.set_enabled(open);
         let _ = items.pin_explorer.set_enabled(open);
         let _ = items.move_explorer.set_enabled(open);

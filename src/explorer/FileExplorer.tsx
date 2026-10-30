@@ -1,6 +1,4 @@
-import { mdiPin, mdiPinOutline } from "@mdi/js";
-import { useEffect, useState } from "react";
-import * as api from "../api";
+import { mdiFilePlusOutline, mdiPin, mdiPinOutline } from "@mdi/js";
 import type { ExplorerLayout, FileEntry } from "../api";
 import { IconButton } from "../ui/IconButton";
 import { FileTree } from "./FileTree";
@@ -11,17 +9,26 @@ type Props = {
   floating: boolean;
   /** Only false while floating and not hovered: then it's out of view and can't be clicked. */
   visible: boolean;
+  /** The workspace's files; null while they're still loading. */
+  files: FileEntry[] | null;
+  /** Why the files couldn't be listed, if they couldn't. */
+  error?: string;
+  /** A file to highlight, e.g. the note that was just created. */
+  highlightedPath?: string;
   onTogglePinned: () => void;
+  onNewNote: () => void;
 };
 
-export function FileExplorer({ layout, floating, visible, onTogglePinned }: Props) {
-  const [files, setFiles] = useState<FileEntry[] | null>(null);
-  const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    api.listFiles().then(setFiles, (e) => setError(String(e)));
-  }, []);
-
+export function FileExplorer({
+  layout,
+  floating,
+  visible,
+  files,
+  error,
+  highlightedPath,
+  onTogglePinned,
+  onNewNote,
+}: Props) {
   const pinned = layout.mode === "pinned";
   const fromLeft = layout.side === "left";
   // Slides in from its edge of the window with a light fade; when hidden it waits fully outside the window.
@@ -46,12 +53,15 @@ export function FileExplorer({ layout, floating, visible, onTogglePinned }: Prop
     >
       <div className="flex items-center justify-between py-1.5 pr-1.5 pl-3">
         <span className="text-xs font-medium tracking-wide text-neutral-500 uppercase">Files</span>
-        <IconButton
-          icon={pinned ? mdiPin : mdiPinOutline}
-          label="Pin file explorer"
-          pressed={pinned}
-          onClick={onTogglePinned}
-        />
+        <div className="flex items-center gap-0.5">
+          <IconButton icon={mdiFilePlusOutline} label="New note" onClick={onNewNote} />
+          <IconButton
+            icon={pinned ? mdiPin : mdiPinOutline}
+            label="Pin file explorer"
+            pressed={pinned}
+            onClick={onTogglePinned}
+          />
+        </div>
       </div>
       <nav className="flex-1 overflow-y-auto px-1.5 pb-2">
         {error ? (
@@ -61,7 +71,7 @@ export function FileExplorer({ layout, floating, visible, onTogglePinned }: Prop
         ) : files?.length === 0 ? (
           <p className="px-2 text-sm text-neutral-500">This workspace is empty.</p>
         ) : (
-          files && <FileTree entries={files} />
+          files && <FileTree entries={files} highlightedPath={highlightedPath} />
         )}
       </nav>
     </aside>

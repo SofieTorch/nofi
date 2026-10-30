@@ -36,7 +36,12 @@ export function getRecentWorkspaces(): Promise<Workspace[]> {
   return invoke("get_recent_workspaces");
 }
 
-export type MenuAction = "close-workspace" | "toggle-explorer-pinned" | "move-explorer-to-other-side";
+export type MenuAction =
+  | "new-note"
+  | "new-markdown-note"
+  | "close-workspace"
+  | "toggle-explorer-pinned"
+  | "move-explorer-to-other-side";
 
 /** Calls `handler` whenever the user chooses one of the app's items in the native menu. */
 export function onMenuAction(handler: (action: MenuAction) => void): Promise<UnlistenFn> {
@@ -69,4 +74,14 @@ export function getExplorerLayout(): Promise<ExplorerLayout> {
 
 export function saveExplorerLayout(layout: ExplorerLayout): Promise<void> {
   return invoke("save_explorer_layout", { layout });
+}
+
+export type NoteFormat = "typst" | "markdown";
+
+/**
+ * Creates an empty note at the top of the workspace, named "Untitled" (then "Untitled 2"…).
+ * Without a format, uses the default (Typst). Resolves to the new note's path in the workspace.
+ */
+export function createNote(format?: NoteFormat): Promise<string> {
+  return invoke("create_note", { format });
 }

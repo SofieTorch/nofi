@@ -1,5 +1,6 @@
 import {
   mdiChevronRight,
+  mdiFileDocumentEditOutline,
   mdiFileDocumentOutline,
   mdiFileImageOutline,
   mdiFileOutline,
@@ -12,14 +13,31 @@ import { Icon } from "@mdi/react";
 import { useState } from "react";
 import type { FileEntry } from "../api";
 
-export function FileTree({ entries, depth = 0 }: { entries: FileEntry[]; depth?: number }) {
+type Props = {
+  entries: FileEntry[];
+  /** A file to highlight, e.g. the note that was just created. */
+  highlightedPath?: string;
+  depth?: number;
+};
+
+export function FileTree({ entries, highlightedPath, depth = 0 }: Props) {
   return (
     <ul className="flex flex-col">
       {entries.map((entry) =>
         entry.kind === "folder" ? (
-          <FolderItem key={entry.path} folder={entry} depth={depth} />
+          <FolderItem
+            key={entry.path}
+            folder={entry}
+            highlightedPath={highlightedPath}
+            depth={depth}
+          />
         ) : (
-          <li key={entry.path} className={row} style={{ paddingLeft: indent(depth) }}>
+          <li
+            key={entry.path}
+            aria-current={entry.path === highlightedPath ? "true" : undefined}
+            className={`${row} ${entry.path === highlightedPath ? "bg-neutral-100" : ""}`}
+            style={{ paddingLeft: indent(depth) }}
+          >
             <span className="size-3.5 shrink-0" />
             <Icon path={fileIcon(entry.name)} size="16px" className="shrink-0 text-neutral-400" />
             <span className="truncate">{entry.name}</span>
@@ -30,7 +48,15 @@ export function FileTree({ entries, depth = 0 }: { entries: FileEntry[]; depth?:
   );
 }
 
-function FolderItem({ folder, depth }: { folder: FileEntry; depth: number }) {
+function FolderItem({
+  folder,
+  highlightedPath,
+  depth,
+}: {
+  folder: FileEntry;
+  highlightedPath?: string;
+  depth: number;
+}) {
   const [expanded, setExpanded] = useState(false);
   return (
     <li>
@@ -52,7 +78,9 @@ function FolderItem({ folder, depth }: { folder: FileEntry; depth: number }) {
         />
         <span className="truncate">{folder.name}</span>
       </button>
-      {expanded && <FileTree entries={folder.children} depth={depth + 1} />}
+      {expanded && (
+        <FileTree entries={folder.children} highlightedPath={highlightedPath} depth={depth + 1} />
+      )}
     </li>
   );
 }
@@ -64,6 +92,8 @@ const indent = (depth: number) => `${0.25 + depth * 0.875}rem`;
 function fileIcon(name: string) {
   const extension = name.split(".").pop()?.toLowerCase();
   switch (extension) {
+    case "typ":
+      return mdiFileDocumentEditOutline;
     case "md":
     case "txt":
       return mdiFileDocumentOutline;
