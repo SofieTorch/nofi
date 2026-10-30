@@ -27,6 +27,12 @@ function backendCreates(path: string, before: api.FileEntry[] = []) {
   });
 }
 
+/** A new note's name starts as a field to type over (see renaming-a-note); Escape keeps "Untitled". */
+async function keepItsName() {
+  await screen.findByRole("textbox", { name: "Note name" });
+  await userEvent.keyboard("{Escape}");
+}
+
 const newNoteButton = () => screen.getByRole("button", { name: /new note/i });
 const highlightedNote = () => screen.queryByRole("listitem", { current: true });
 
@@ -61,6 +67,7 @@ describe("Creating a new note", () => {
     await renderOpenWorkspace();
 
     await chooseInMenu("File › New Note");
+    await keepItsName();
 
     expect(await screen.findByText("Untitled.typ")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Papers" })).toBeInTheDocument();
@@ -71,6 +78,7 @@ describe("Creating a new note", () => {
     await renderOpenWorkspace();
 
     await chooseInMenu("File › New Note");
+    await keepItsName();
 
     await vi.waitFor(() => expect(highlightedNote()).toHaveTextContent("Untitled.typ"));
   });
@@ -79,10 +87,11 @@ describe("Creating a new note", () => {
     backendCreates("Untitled.typ");
     await renderOpenWorkspace();
     await chooseInMenu("File › New Note");
-    await screen.findByText("Untitled.typ");
+    await keepItsName();
     backendCreates("Untitled 2.typ", [file("Untitled.typ")]);
 
     await chooseInMenu("File › New Note");
+    await keepItsName();
 
     await vi.waitFor(() => expect(highlightedNote()).toHaveTextContent("Untitled 2.typ"));
     expect(screen.getAllByRole("listitem", { current: true })).toHaveLength(1);

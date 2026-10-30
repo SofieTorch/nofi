@@ -17,6 +17,9 @@ export function setUpFakeBackend() {
   vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "pinned" });
   vi.mocked(api.saveExplorerLayout).mockResolvedValue();
   vi.mocked(api.createNote).mockResolvedValue("Untitled.typ");
+  vi.mocked(api.renameNote).mockImplementation(async (path, newName) =>
+    path.replace(/[^/]*?(\.[^./]+)?$/, `${newName}$1`),
+  );
   vi.mocked(api.onMenuAction).mockImplementation(async (handler) => {
     menuHandlers.push(handler);
     return () => {

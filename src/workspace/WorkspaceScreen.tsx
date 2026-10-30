@@ -12,6 +12,8 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   const [files, setFiles] = useState<FileEntry[] | null>(null);
   const [filesError, setFilesError] = useState<string>();
   const [newNotePath, setNewNotePath] = useState<string>();
+  // A new note's name is ready to type over until it's saved or kept.
+  const [renamingPath, setRenamingPath] = useState<string>();
   const [problem, setProblem] = useState<string>();
 
   async function loadFiles() {
@@ -32,10 +34,18 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       const path = format ? await api.createNote(format) : await api.createNote();
       setProblem(undefined);
       setNewNotePath(path);
+      setRenamingPath(path);
       await loadFiles();
     } catch (error) {
       setProblem(`Couldn't create the note: ${error}`);
     }
+  }
+
+  async function renameNote(path: string, newName: string) {
+    const newPath = await api.renameNote(path, newName);
+    await loadFiles();
+    setNewNotePath(newPath);
+    setRenamingPath(undefined);
   }
 
   function showLayout(next: ExplorerLayout) {
@@ -79,6 +89,13 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     files,
     error: filesError,
     highlightedPath: newNotePath,
+    renaming: renamingPath
+      ? {
+          path: renamingPath,
+          onRename: (newName: string) => renameNote(renamingPath, newName),
+          onCancel: () => setRenamingPath(undefined),
+        }
+      : undefined,
     onTogglePinned: togglePinned,
     onNewNote: () => newNote(),
   };
@@ -103,8 +120,9 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
             onMouseLeave={() => setHovering(false)}
             className="relative z-10 h-full w-2 shrink-0"
           >
-            {/* Always mounted so it can animate out and keeps its open folders. */}
-            <FileExplorer {...explorerProps} floating visible={hovering} />
+            {/* Always mounted so it can animate out and keeps its open folders.
+                Stays out while a new note is being named, so the name field doesn't vanish. */}
+            <FileExplorer {...explorerProps} floating visible={hovering || !!renamingPath} />
           </div>
         )}
         <main className="relative flex-1 overflow-auto p-6">

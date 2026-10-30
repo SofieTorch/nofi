@@ -1,7 +1,7 @@
 import { mdiFilePlusOutline, mdiPin, mdiPinOutline } from "@mdi/js";
 import type { ExplorerLayout, FileEntry } from "../api";
 import { IconButton } from "../ui/IconButton";
-import { FileTree } from "./FileTree";
+import { FileTree, type Renaming } from "./FileTree";
 
 type Props = {
   layout: ExplorerLayout;
@@ -15,6 +15,8 @@ type Props = {
   error?: string;
   /** A file to highlight, e.g. the note that was just created. */
   highlightedPath?: string;
+  /** The note whose name is being typed, if any. */
+  renaming?: Renaming;
   onTogglePinned: () => void;
   onNewNote: () => void;
 };
@@ -26,6 +28,7 @@ export function FileExplorer({
   files,
   error,
   highlightedPath,
+  renaming,
   onTogglePinned,
   onNewNote,
 }: Props) {
@@ -71,7 +74,9 @@ export function FileExplorer({
         ) : files?.length === 0 ? (
           <p className="px-2 text-sm text-neutral-500">This workspace is empty.</p>
         ) : (
-          files && <FileTree entries={files} highlightedPath={highlightedPath} />
+          files && (
+            <FileTree entries={files} highlightedPath={highlightedPath} renaming={renaming} />
+          )
         )}
       </nav>
     </aside>

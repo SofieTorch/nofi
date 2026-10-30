@@ -6,7 +6,7 @@ pub mod workspace;
 
 use files::FileEntry;
 use layout::{ExplorerLayout, ExplorerMode};
-use notes::NoteFormat;
+use notes::{NoteFormat, RenameError};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
@@ -102,6 +102,18 @@ fn create_note(current: State<CurrentWorkspace>, format: Option<NoteFormat>) -> 
     notes::create_note(&current.path()?, format.unwrap_or_default()).map_err(|e| e.to_string())
 }
 
+/// Gives a note a new name (without extension), keeping its format and folder.
+/// Returns its new path relative to the workspace.
+#[tauri::command]
+fn rename_note(
+    current: State<CurrentWorkspace>,
+    path: String,
+    new_name: String,
+) -> Result<String, RenameError> {
+    let workspace = current.path().map_err(RenameError::Io)?;
+    notes::rename_note(&workspace, &path, &new_name)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -122,7 +134,8 @@ pub fn run() {
             list_files,
             get_explorer_layout,
             save_explorer_layout,
-            create_note
+            create_note,
+            rename_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

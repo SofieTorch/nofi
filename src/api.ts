@@ -85,3 +85,11 @@ export type NoteFormat = "typst" | "markdown";
 export function createNote(format?: NoteFormat): Promise<string> {
   return invoke("create_note", { format });
 }
+
+/**
+ * Gives a note a new name, typed without its extension: its format and folder stay the same.
+ * Resolves to the note's new path; rejects with a readable reason (e.g. the name is taken).
+ */
+export function renameNote(path: string, newName: string): Promise<string> {
+  return invoke("rename_note", { path, newName });
+}
