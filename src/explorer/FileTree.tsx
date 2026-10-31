@@ -12,6 +12,7 @@ import {
 import { Icon } from "@mdi/react";
 import { useEffect, useRef, useState } from "react";
 import type { FileEntry } from "../api";
+import { noteFormat } from "../editor/formatting";
 
 /** A note whose name is being typed, e.g. right after it was created. */
 export type Renaming = {
@@ -26,10 +27,14 @@ type Props = {
   /** A file to highlight, e.g. the note that was just created. */
   highlightedPath?: string;
   renaming?: Renaming;
+  /** Opens a note (only notes can be opened, not e.g. PDFs). */
+  onOpen?: (path: string) => void;
+  /** Notes known to have mistakes: they get a red dot. */
+  withMistakes?: ReadonlySet<string>;
   depth?: number;
 };
 
-export function FileTree({ entries, highlightedPath, renaming, depth = 0 }: Props) {
+export function FileTree({ entries, highlightedPath, renaming, onOpen, withMistakes, depth = 0 }: Props) {
   return (
     <ul className="flex flex-col">
       {entries.map((entry) =>
@@ -39,21 +44,39 @@ export function FileTree({ entries, highlightedPath, renaming, depth = 0 }: Prop
             folder={entry}
             highlightedPath={highlightedPath}
             renaming={renaming}
+            onOpen={onOpen}
+            withMistakes={withMistakes}
             depth={depth}
           />
         ) : (
           <li
             key={entry.path}
             aria-current={entry.path === highlightedPath ? "true" : undefined}
-            className={`${row} relative ${entry.path === highlightedPath ? "bg-neutral-100" : ""}`}
-            style={{ paddingLeft: indent(depth) }}
+            className={`relative rounded-md ${entry.path === highlightedPath ? "bg-neutral-100" : ""}`}
           >
-            <span className="size-3.5 shrink-0" />
-            <Icon path={fileIcon(entry.name)} size="16px" className="shrink-0 text-neutral-400" />
             {renaming?.path === entry.path ? (
-              <NameField fileName={entry.name} renaming={renaming} />
+              <div className={row} style={{ paddingLeft: indent(depth) }}>
+                <FileLabel name={entry.name} />
+                <NameField fileName={entry.name} renaming={renaming} />
+              </div>
+            ) : noteFormat(entry.path) && onOpen ? (
+              <button
+                onClick={() => onOpen(entry.path)}
+                aria-description={withMistakes?.has(entry.path) ? "Has mistakes" : undefined}
+                className={`${row} w-full text-left hover:bg-neutral-100`}
+                style={{ paddingLeft: indent(depth) }}
+              >
+                <FileLabel name={entry.name} />
+                <span className="truncate">{entry.name}</span>
+                {withMistakes?.has(entry.path) && (
+                  <span title="Has mistakes" className="ml-auto size-1.5 shrink-0 rounded-full bg-red-400" />
+                )}
+              </button>
             ) : (
-              <span className="truncate">{entry.name}</span>
+              <div className={row} style={{ paddingLeft: indent(depth) }}>
+                <FileLabel name={entry.name} />
+                <span className="truncate">{entry.name}</span>
+              </div>
             )}
           </li>
         ),
@@ -62,15 +85,29 @@ export function FileTree({ entries, highlightedPath, renaming, depth = 0 }: Prop
   );
 }
 
+/** The space where a folder has its chevron, then the file's icon. */
+function FileLabel({ name }: { name: string }) {
+  return (
+    <>
+      <span className="size-3.5 shrink-0" />
+      <Icon path={fileIcon(name)} size="16px" className="shrink-0 text-neutral-400" />
+    </>
+  );
+}
+
 function FolderItem({
   folder,
   highlightedPath,
   renaming,
+  onOpen,
+  withMistakes,
   depth,
 }: {
   folder: FileEntry;
   highlightedPath?: string;
   renaming?: Renaming;
+  onOpen?: (path: string) => void;
+  withMistakes?: ReadonlySet<string>;
   depth: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -99,6 +136,8 @@ function FolderItem({
           entries={folder.children}
           highlightedPath={highlightedPath}
           renaming={renaming}
+          onOpen={onOpen}
+          withMistakes={withMistakes}
           depth={depth + 1}
         />
       )}

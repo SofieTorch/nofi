@@ -1,4 +1,8 @@
-import { mdiPageLayoutSidebarLeft, mdiPageLayoutSidebarRight } from "@mdi/js";
+import {
+  mdiFileDocumentMultipleOutline,
+  mdiPageLayoutSidebarLeft,
+  mdiPageLayoutSidebarRight,
+} from "@mdi/js";
 import type { ExplorerLayout } from "../api";
 import { IconButton } from "../ui/IconButton";
 import { isMac } from "../ui/platform";
@@ -7,9 +11,17 @@ type Props = {
   workspaceName: string;
   explorerSide: ExplorerLayout["side"];
   onExplorerSideChange: (side: ExplorerLayout["side"]) => void;
+  showPages: boolean;
+  onToggleShowPages: () => void;
 };
 
-export function TopBar({ workspaceName, explorerSide, onExplorerSideChange }: Props) {
+export function TopBar({
+  workspaceName,
+  explorerSide,
+  onExplorerSideChange,
+  showPages,
+  onToggleShowPages,
+}: Props) {
   return (
     // data-tauri-drag-region lets the user move the window by dragging the bar.
     <header
@@ -33,6 +45,13 @@ export function TopBar({ workspaceName, explorerSide, onExplorerSideChange }: Pr
           label="Explorer on the right"
           pressed={explorerSide === "right"}
           onClick={() => onExplorerSideChange("right")}
+        />
+        <span className="mx-1 h-4 w-px bg-neutral-200" />
+        <IconButton
+          icon={mdiFileDocumentMultipleOutline}
+          label="Show pages"
+          pressed={showPages}
+          onClick={onToggleShowPages}
         />
       </div>
     </header>

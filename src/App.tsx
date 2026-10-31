@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as api from "./api";
 import type { Workspace } from "./api";
 import "./App.css";
+import { flushAllSaves } from "./editor/autosave";
 import { WorkspaceScreen } from "./workspace/WorkspaceScreen";
 
 type State =
@@ -48,6 +49,8 @@ function App() {
   }
 
   async function closeWorkspace() {
+    // Anything typed just before closing is still saved into the workspace.
+    await flushAllSaves();
     await api.closeWorkspace();
     setState({ status: "choosing" });
   }

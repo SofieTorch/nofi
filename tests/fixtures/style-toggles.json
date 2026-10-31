@@ -1,0 +1,609 @@
+{
+  "about": "Adding, removing and changing styles with the format toolbar. « and » mark the selection, before and after. `style` toggles a style; `option` with `value` sets a style's setting (null removes it); `turnInto` changes the kind of block; `indent` is \"in\" or \"out\". The TypeScript tests check the toolbar gives exactly `after`; the Rust tests check every Typst `after` is valid Typst.",
+  "typst": [
+    {
+      "name": "a word becomes bold with stars",
+      "before": "Read «more» papers.",
+      "style": "bold",
+      "after": "Read *«more»* papers."
+    },
+    {
+      "name": "a word becomes italic with underscores",
+      "before": "Read «slowly».",
+      "style": "italic",
+      "after": "Read _«slowly»_."
+    },
+    {
+      "name": "spaces around the selection stay outside the style",
+      "before": "Read« more »papers",
+      "style": "bold",
+      "after": "Read *«more»* papers"
+    },
+    {
+      "name": "part of a word uses #strong, because stars inside a word don't work",
+      "before": "sn«ake» case",
+      "style": "bold",
+      "after": "sn#strong[«ake»] case"
+    },
+    {
+      "name": "part of a word uses #emph for italic",
+      "before": "re«read»",
+      "style": "italic",
+      "after": "re#emph[«read»]"
+    },
+    {
+      "name": "text over several lines uses #strong",
+      "before": "«first line\nsecond line»",
+      "style": "bold",
+      "after": "#strong[«first line\nsecond line»]"
+    },
+    {
+      "name": "highlight",
+      "before": "A «key» idea.",
+      "style": "highlight",
+      "after": "A #highlight[«key»] idea."
+    },
+    {
+      "name": "strikethrough",
+      "before": "An «old» idea.",
+      "style": "strikethrough",
+      "after": "An #strike[«old»] idea."
+    },
+    {
+      "name": "underline",
+      "before": "A «main» point.",
+      "style": "underline",
+      "after": "A #underline[«main»] point."
+    },
+    {
+      "name": "small capitals",
+      "before": "By «Vaswani».",
+      "style": "smallcaps",
+      "after": "By #smallcaps[«Vaswani»]."
+    },
+    {
+      "name": "inline code",
+      "before": "Run «ls -la» now.",
+      "style": "code",
+      "after": "Run `«ls -la»` now."
+    },
+    {
+      "name": "inline maths",
+      "before": "The area «x^2» grows.",
+      "style": "maths",
+      "after": "The area $«x^2»$ grows."
+    },
+    {
+      "name": "a bracket in the text is kept as text inside a style function",
+      "before": "A «x] y» z",
+      "style": "highlight",
+      "after": "A #highlight[«x\\] y»] z"
+    },
+    {
+      "name": "a style can be added inside another one",
+      "before": "A #highlight[«key»] idea.",
+      "style": "bold",
+      "after": "A #highlight[*«key»*] idea."
+    },
+    {
+      "name": "bold is removed again",
+      "before": "Read *«more»* papers.",
+      "style": "bold",
+      "after": "Read «more» papers."
+    },
+    {
+      "name": "selecting the stars too also removes bold",
+      "before": "Read «*more*» papers.",
+      "style": "bold",
+      "after": "Read «more» papers."
+    },
+    {
+      "name": "#strong is removed by the bold button",
+      "before": "sn#strong[«ake»] case",
+      "style": "bold",
+      "after": "sn«ake» case"
+    },
+    {
+      "name": "a highlight is removed",
+      "before": "A #highlight[«key»] idea.",
+      "style": "highlight",
+      "after": "A «key» idea."
+    },
+    {
+      "name": "selecting part of a highlight removes all of it",
+      "before": "A #highlight[very «key» idea].",
+      "style": "highlight",
+      "after": "A very «key» idea."
+    },
+    {
+      "name": "a highlight with settings is removed with them",
+      "before": "A #highlight(fill: aqua)[«key»] idea.",
+      "style": "highlight",
+      "after": "A «key» idea."
+    },
+    {
+      "name": "maths is turned back into text",
+      "before": "The area $«x^2»$ grows.",
+      "style": "maths",
+      "after": "The area «x^2» grows."
+    },
+    {
+      "name": "removing the outer style keeps the inner one",
+      "before": "A #highlight[*«key»*] idea.",
+      "style": "highlight",
+      "after": "A *«key»* idea."
+    },
+    {
+      "name": "a highlight over several lines is removed from anywhere inside it",
+      "before": "#highlight[first «line»\nsecond line] after",
+      "style": "highlight",
+      "after": "first «line»\nsecond line after"
+    },
+    {
+      "name": "bold continuing onto the next line is removed",
+      "before": "Some *bold «text»\ncontinues* here.",
+      "style": "bold",
+      "after": "Some bold «text»\ncontinues here."
+    },
+    {
+      "name": "a style inside a multi-line highlight is removed and the highlight kept",
+      "before": "#highlight[very *«important»\nidea*]",
+      "style": "bold",
+      "after": "#highlight[very «important»\nidea]"
+    },
+    {
+      "name": "a multi-line highlight is removed and the style inside it kept",
+      "before": "#highlight[very *«important»\nidea*]",
+      "style": "highlight",
+      "after": "very *«important»\nidea*"
+    },
+    {
+      "name": "several lines become highlighted",
+      "before": "«first line\nsecond line»",
+      "style": "highlight",
+      "after": "#highlight[«first line\nsecond line»]"
+    },
+    {
+      "name": "several paragraphs become bold",
+      "before": "«first\n\nsecond»",
+      "style": "bold",
+      "after": "#strong[«first\n\nsecond»]"
+    },
+    {
+      "name": "superscript",
+      "before": "The 10«th» try.",
+      "style": "superscript",
+      "after": "The 10#super[«th»] try."
+    },
+    {
+      "name": "subscript",
+      "before": "Water is H«2»O.",
+      "style": "subscript",
+      "after": "Water is H#sub[«2»]O."
+    },
+    {
+      "name": "overline",
+      "before": "The mean «x» value.",
+      "style": "overline",
+      "after": "The mean #overline[«x»] value."
+    },
+    {
+      "name": "uppercase",
+      "before": "A «loud» word.",
+      "style": "uppercase",
+      "after": "A #upper[«loud»] word."
+    },
+    {
+      "name": "lowercase",
+      "before": "A «QUIET» word.",
+      "style": "lowercase",
+      "after": "A #lower[«QUIET»] word."
+    },
+    {
+      "name": "superscript is removed again",
+      "before": "The 10#super[«th»] try.",
+      "style": "superscript",
+      "after": "The 10«th» try."
+    },
+    {
+      "name": "a link is added",
+      "before": "See «Typst» docs.",
+      "option": "link",
+      "value": "https://typst.app",
+      "after": "See #link(\"https://typst.app\")[«Typst»] docs."
+    },
+    {
+      "name": "a link's address is changed",
+      "before": "See #link(\"https://a.org\")[«Typst»].",
+      "option": "link",
+      "value": "https://typst.app",
+      "after": "See #link(\"https://typst.app\")[«Typst»]."
+    },
+    {
+      "name": "a link is removed",
+      "before": "See #link(\"https://typst.app\")[«Typst»].",
+      "option": "link",
+      "value": null,
+      "after": "See «Typst»."
+    },
+    {
+      "name": "quotes in an address are kept as text",
+      "before": "«x»",
+      "option": "link",
+      "value": "https://x.org/?q=\"a\"",
+      "after": "#link(\"https://x.org/?q=\\\"a\\\"\")[«x»]"
+    },
+    {
+      "name": "text gets a colour",
+      "before": "A «red» word.",
+      "option": "colour",
+      "value": "rgb(\"#e03e3e\")",
+      "after": "A #text(fill: rgb(\"#e03e3e\"))[«red»] word."
+    },
+    {
+      "name": "a colour is changed",
+      "before": "A #text(fill: rgb(\"#e03e3e\"))[«red»] word.",
+      "option": "colour",
+      "value": "rgb(\"#0b6e99\")",
+      "after": "A #text(fill: rgb(\"#0b6e99\"))[«red»] word."
+    },
+    {
+      "name": "a colour is removed",
+      "before": "A #text(fill: rgb(\"#e03e3e\"))[«red»] word.",
+      "option": "colour",
+      "value": null,
+      "after": "A «red» word."
+    },
+    {
+      "name": "a colour inside a highlight",
+      "before": "A #highlight[«key»] idea.",
+      "option": "colour",
+      "value": "rgb(\"#e03e3e\")",
+      "after": "A #highlight[#text(fill: rgb(\"#e03e3e\"))[«key»]] idea."
+    },
+    {
+      "name": "text gets a highlight colour",
+      "before": "A «key» idea.",
+      "option": "highlight",
+      "value": "rgb(\"#fbe4e4\")",
+      "after": "A #highlight(fill: rgb(\"#fbe4e4\"))[«key»] idea."
+    },
+    {
+      "name": "a highlight's colour is changed",
+      "before": "A #highlight[«key»] idea.",
+      "option": "highlight",
+      "value": "rgb(\"#fbf3db\")",
+      "after": "A #highlight(fill: rgb(\"#fbf3db\"))[«key»] idea."
+    },
+    {
+      "name": "a highlight goes back to the default yellow",
+      "before": "A #highlight(fill: rgb(\"#fbe4e4\"))[«key»] idea.",
+      "option": "highlight",
+      "value": null,
+      "after": "A #highlight[«key»] idea."
+    },
+    {
+      "name": "a line is centred, all of it",
+      "before": "Intro\nTi«tl»e\nMore",
+      "option": "align",
+      "value": "center",
+      "after": "Intro\n#align(center)[Ti«tl»e]\nMore"
+    },
+    {
+      "name": "several lines are aligned right",
+      "before": "«First\nSecond»",
+      "option": "align",
+      "value": "right",
+      "after": "#align(right)[«First\nSecond»]"
+    },
+    {
+      "name": "an alignment is changed",
+      "before": "#align(center)[«Title»]",
+      "option": "align",
+      "value": "right",
+      "after": "#align(right)[«Title»]"
+    },
+    {
+      "name": "aligning left removes the alignment (it's the default)",
+      "before": "#align(center)[«Title»]",
+      "option": "align",
+      "value": "left",
+      "after": "«Title»"
+    },
+    {
+      "name": "a paragraph is justified",
+      "before": "«A long paragraph\nthat continues»",
+      "style": "justify",
+      "after": "#par(justify: true)[«A long paragraph\nthat continues»]"
+    },
+    {
+      "name": "justification is removed again",
+      "before": "#par(justify: true)[A long «paragraph»]",
+      "style": "justify",
+      "after": "A long «paragraph»"
+    },
+    {
+      "name": "text gets bigger",
+      "before": "A «big» word.",
+      "option": "size",
+      "value": "1.5em",
+      "after": "A #text(size: 1.5em)[«big»] word."
+    },
+    {
+      "name": "a size is changed",
+      "before": "#text(size: 1.5em)[«big»]",
+      "option": "size",
+      "value": "2em",
+      "after": "#text(size: 2em)[«big»]"
+    },
+    {
+      "name": "a size is removed",
+      "before": "#text(size: 1.5em)[«big»]",
+      "option": "size",
+      "value": null,
+      "after": "«big»"
+    },
+    {
+      "name": "a size joins the colour already there",
+      "before": "#text(fill: rgb(\"#d44c47\"))[«x»]",
+      "option": "size",
+      "value": "1.5em",
+      "after": "#text(fill: rgb(\"#d44c47\"), size: 1.5em)[«x»]"
+    },
+    {
+      "name": "removing the colour keeps the size",
+      "before": "#text(fill: rgb(\"#d44c47\"), size: 1.5em)[«x»]",
+      "option": "colour",
+      "value": null,
+      "after": "#text(size: 1.5em)[«x»]"
+    },
+    {
+      "name": "part of coloured text gets its own colour",
+      "before": "#text(fill: rgb(\"#d44c47\"))[a «b» c]",
+      "option": "colour",
+      "value": "rgb(\"#337ea9\")",
+      "after": "#text(fill: rgb(\"#d44c47\"))[a #text(fill: rgb(\"#337ea9\"))[«b»] c]"
+    },
+    {
+      "name": "text gets a font",
+      "before": "In «serif» type.",
+      "option": "font",
+      "value": "Libertinus Serif",
+      "after": "In #text(font: \"Libertinus Serif\")[«serif»] type."
+    },
+    {
+      "name": "a font is removed",
+      "before": "In #text(font: \"Libertinus Serif\")[«serif»] type.",
+      "option": "font",
+      "value": null,
+      "after": "In «serif» type."
+    },
+    {
+      "name": "a line becomes a heading",
+      "before": "«Title»",
+      "turnInto": "heading-1",
+      "after": "= «Title»"
+    },
+    {
+      "name": "a heading changes level",
+      "before": "== «Title»",
+      "turnInto": "heading-3",
+      "after": "=== «Title»"
+    },
+    {
+      "name": "a heading becomes text",
+      "before": "= «Title»",
+      "turnInto": "text",
+      "after": "«Title»"
+    },
+    {
+      "name": "lines become a bulleted list",
+      "before": "«one\ntwo»",
+      "turnInto": "bulleted-list",
+      "after": "- «one\n- two»"
+    },
+    {
+      "name": "a bulleted list becomes numbered",
+      "before": "- «one\n- two»",
+      "turnInto": "numbered-list",
+      "after": "+ «one\n+ two»"
+    },
+    {
+      "name": "a list item becomes a heading",
+      "before": "- «item»",
+      "turnInto": "heading-2",
+      "after": "== «item»"
+    },
+    {
+      "name": "a nested list keeps its indent",
+      "before": "  - «item»",
+      "turnInto": "numbered-list",
+      "after": "  + «item»"
+    },
+    {
+      "name": "text becomes a quote",
+      "before": "«A wise saying»",
+      "turnInto": "quote",
+      "after": "#quote(block: true)[«A wise saying»]"
+    },
+    {
+      "name": "a quote becomes text again",
+      "before": "#quote(block: true)[«A wise saying»]",
+      "turnInto": "text",
+      "after": "«A wise saying»"
+    },
+    {
+      "name": "text becomes a callout",
+      "before": "«Watch out»",
+      "turnInto": "callout",
+      "after": "#block(fill: luma(240), inset: 10pt, radius: 4pt, width: 100%)[«Watch out»]"
+    },
+    {
+      "name": "a callout becomes a quote",
+      "before": "#block(fill: luma(240), inset: 10pt, radius: 4pt, width: 100%)[«Watch out»]",
+      "turnInto": "quote",
+      "after": "#quote(block: true)[«Watch out»]"
+    },
+    {
+      "name": "a quote becomes a heading",
+      "before": "#quote(block: true)[«Title»]",
+      "turnInto": "heading-1",
+      "after": "= «Title»"
+    },
+    {
+      "name": "a list item is nested deeper",
+      "before": "- «item»",
+      "indent": "in",
+      "after": "  - «item»"
+    },
+    {
+      "name": "a nested list item comes back out",
+      "before": "  - «item»",
+      "indent": "out",
+      "after": "- «item»"
+    },
+    {
+      "name": "text is indented",
+      "before": "«A paragraph»",
+      "indent": "in",
+      "after": "#pad(left: 2em)[«A paragraph»]"
+    },
+    {
+      "name": "indented text is indented further",
+      "before": "#pad(left: 2em)[«A paragraph»]",
+      "indent": "in",
+      "after": "#pad(left: 4em)[«A paragraph»]"
+    },
+    {
+      "name": "indented text comes back a step",
+      "before": "#pad(left: 4em)[«A paragraph»]",
+      "indent": "out",
+      "after": "#pad(left: 2em)[«A paragraph»]"
+    },
+    {
+      "name": "indented text comes all the way back",
+      "before": "#pad(left: 2em)[«A paragraph»]",
+      "indent": "out",
+      "after": "«A paragraph»"
+    },
+    {
+      "name": "selected text becomes a footnote",
+      "before": "A claim«, see the paper».",
+      "style": "footnote",
+      "after": "A claim#footnote[«, see the paper»]."
+    },
+    {
+      "name": "a footnote becomes text again",
+      "before": "A claim#footnote[«see the paper»].",
+      "style": "footnote",
+      "after": "A claim«see the paper»."
+    }
+  ],
+  "markdown": [
+    {
+      "name": "bold with double stars",
+      "before": "Read «more».",
+      "style": "bold",
+      "after": "Read **«more»**."
+    },
+    {
+      "name": "italic with a star",
+      "before": "Read «slowly».",
+      "style": "italic",
+      "after": "Read *«slowly»*."
+    },
+    {
+      "name": "strikethrough with tildes",
+      "before": "An «old» idea.",
+      "style": "strikethrough",
+      "after": "An ~~«old»~~ idea."
+    },
+    {
+      "name": "inline code",
+      "before": "Run «ls» now.",
+      "style": "code",
+      "after": "Run `«ls»` now."
+    },
+    {
+      "name": "bold is removed again",
+      "before": "Read **«more»**.",
+      "style": "bold",
+      "after": "Read «more»."
+    },
+    {
+      "name": "strikethrough is removed again",
+      "before": "An ~~«old»~~ idea.",
+      "style": "strikethrough",
+      "after": "An «old» idea."
+    },
+    {
+      "name": "bold continuing onto the next line is removed",
+      "before": "**bold «text»\ncontinues**",
+      "style": "bold",
+      "after": "bold «text»\ncontinues"
+    },
+    {
+      "name": "a link is added",
+      "before": "See «Typst» docs.",
+      "option": "link",
+      "value": "https://typst.app",
+      "after": "See [«Typst»](https://typst.app) docs."
+    },
+    {
+      "name": "a link's address is changed",
+      "before": "See [«Typst»](https://a.org).",
+      "option": "link",
+      "value": "https://typst.app",
+      "after": "See [«Typst»](https://typst.app)."
+    },
+    {
+      "name": "a link is removed",
+      "before": "See [«Typst»](https://typst.app).",
+      "option": "link",
+      "value": null,
+      "after": "See «Typst»."
+    },
+    {
+      "name": "a line becomes a heading",
+      "before": "«Title»",
+      "turnInto": "heading-2",
+      "after": "## «Title»"
+    },
+    {
+      "name": "lines become a numbered list",
+      "before": "«one\ntwo»",
+      "turnInto": "numbered-list",
+      "after": "1. «one\n1. two»"
+    },
+    {
+      "name": "lines become a quote",
+      "before": "«one\ntwo»",
+      "turnInto": "quote",
+      "after": "> «one\n> two»"
+    },
+    {
+      "name": "a quote becomes text",
+      "before": "> «wise»",
+      "turnInto": "text",
+      "after": "«wise»"
+    },
+    {
+      "name": "a list item is nested deeper",
+      "before": "- «item»",
+      "indent": "in",
+      "after": "  - «item»"
+    },
+    {
+      "name": "highlight with double equals, like Obsidian",
+      "before": "A «key» idea.",
+      "style": "highlight",
+      "after": "A ==«key»== idea."
+    },
+    {
+      "name": "a highlight is removed again",
+      "before": "A ==«key»== idea.",
+      "style": "highlight",
+      "after": "A «key» idea."
+    }
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "about": "Line numbers and highlighted lines of code blocks, as written in the note. `before` is a note with one code block; `options` are set on it; `after` is the note then. The TypeScript tests check the editor writes exactly `after` (and reads the options back); the Rust tests check every Typst `after` is valid Typst.",
+  "typst": [
+    {
+      "name": "line numbers are turned on",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": true,
+        "highlights": []
+      },
+      "after": "#[\n#show raw.line: it => [#box(width: 2em, text(fill: luma(150), str(it.number)))#it.body]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]"
+    },
+    {
+      "name": "a line is highlighted",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": false,
+        "highlights": [
+          2
+        ]
+      },
+      "after": "#[\n#show raw.line: it => if it.number in (2,) [#highlight(fill: rgb(\"#fff3bf\"), it.body)] else [#it.body]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]"
+    },
+    {
+      "name": "a few lines are highlighted",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": false,
+        "highlights": [
+          1,
+          3
+        ]
+      },
+      "after": "#[\n#show raw.line: it => if it.number in (1, 3) [#highlight(fill: rgb(\"#fff3bf\"), it.body)] else [#it.body]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]"
+    },
+    {
+      "name": "a run of lines is written as a range",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": false,
+        "highlights": [
+          1,
+          2,
+          3
+        ]
+      },
+      "after": "#[\n#show raw.line: it => if it.number in (..range(1, 4)) [#highlight(fill: rgb(\"#fff3bf\"), it.body)] else [#it.body]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]"
+    },
+    {
+      "name": "line numbers and highlighted lines together",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": true,
+        "highlights": [
+          2,
+          3,
+          4
+        ]
+      },
+      "after": "#[\n#show raw.line: it => [#box(width: 2em, text(fill: luma(150), str(it.number)))#if it.number in (..range(2, 5)) [#highlight(fill: rgb(\"#fff3bf\"), it.body)] else [#it.body]]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]"
+    },
+    {
+      "name": "turning everything off takes the wrapper away",
+      "before": "#[\n#show raw.line: it => [#box(width: 2em, text(fill: luma(150), str(it.number)))#if it.number in (..range(2, 5)) [#highlight(fill: rgb(\"#fff3bf\"), it.body)] else [#it.body]]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]",
+      "options": {
+        "numbers": false,
+        "highlights": []
+      },
+      "after": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```"
+    },
+    {
+      "name": "changing the options of a wrapped block rewrites its rule",
+      "before": "#[\n#show raw.line: it => [#box(width: 2em, text(fill: luma(150), str(it.number)))#it.body]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]",
+      "options": {
+        "numbers": true,
+        "highlights": [
+          4
+        ]
+      },
+      "after": "#[\n#show raw.line: it => [#box(width: 2em, text(fill: luma(150), str(it.number)))#if it.number in (4,) [#highlight(fill: rgb(\"#fff3bf\"), it.body)] else [#it.body]]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]"
+    },
+    {
+      "name": "text around the block is kept",
+      "before": "Before.\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\nAfter.",
+      "options": {
+        "numbers": true,
+        "highlights": []
+      },
+      "after": "Before.\n#[\n#show raw.line: it => [#box(width: 2em, text(fill: luma(150), str(it.number)))#it.body]\n```python\na = 1\nb = 2\nc = 3\nd = 4\n```\n]\nAfter."
+    }
+  ],
+  "markdown": [
+    {
+      "name": "line numbers are turned on",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": true,
+        "highlights": []
+      },
+      "after": "```python showLineNumbers\na = 1\nb = 2\nc = 3\nd = 4\n```"
+    },
+    {
+      "name": "lines are highlighted, runs as ranges",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": false,
+        "highlights": [
+          1,
+          2,
+          4
+        ]
+      },
+      "after": "```python {1-2,4}\na = 1\nb = 2\nc = 3\nd = 4\n```"
+    },
+    {
+      "name": "both together",
+      "before": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": true,
+        "highlights": [
+          3
+        ]
+      },
+      "after": "```python {3} showLineNumbers\na = 1\nb = 2\nc = 3\nd = 4\n```"
+    },
+    {
+      "name": "turning everything off leaves just the language",
+      "before": "```python {3} showLineNumbers\na = 1\nb = 2\nc = 3\nd = 4\n```",
+      "options": {
+        "numbers": false,
+        "highlights": []
+      },
+      "after": "```python\na = 1\nb = 2\nc = 3\nd = 4\n```"
+    }
+  ]
+}

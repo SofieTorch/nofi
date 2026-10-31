@@ -11,6 +11,25 @@ use std::path::{Path, PathBuf};
 struct LayoutFile {
     #[serde(default)]
     explorer: ExplorerLayout,
+    /// Whether Typst notes are shown as pages next to the editor.
+    #[serde(default)]
+    show_pages: bool,
+}
+
+fn load(workspace: &Path) -> LayoutFile {
+    fs::read_to_string(layout_file(workspace))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Changes one setting and keeps the others.
+fn update(workspace: &Path, change: impl FnOnce(&mut LayoutFile)) -> io::Result<()> {
+    let mut data = load(workspace);
+    change(&mut data);
+    let file = layout_file(workspace);
+    fs::create_dir_all(file.parent().unwrap())?;
+    fs::write(file, serde_json::to_string_pretty(&data)?)
 }
 
 fn layout_file(workspace: &Path) -> PathBuf {
@@ -42,16 +61,18 @@ pub struct ExplorerLayout {
 }
 
 pub fn load_explorer_layout(workspace: &Path) -> ExplorerLayout {
-    fs::read_to_string(layout_file(workspace))
-        .ok()
-        .and_then(|text| serde_json::from_str::<LayoutFile>(&text).ok())
-        .unwrap_or_default()
-        .explorer
+    load(workspace).explorer
 }
 
 pub fn save_explorer_layout(workspace: &Path, layout: &ExplorerLayout) -> io::Result<()> {
-    let file = layout_file(workspace);
-    fs::create_dir_all(file.parent().unwrap())?;
-    let data = LayoutFile { explorer: *layout };
-    fs::write(file, serde_json::to_string_pretty(&data)?)
+    update(workspace, |data| data.explorer = *layout)
+}
+
+/// Whether Typst notes are shown as pages next to the editor (hidden until turned on).
+pub fn load_show_pages(workspace: &Path) -> bool {
+    load(workspace).show_pages
+}
+
+pub fn save_show_pages(workspace: &Path, show: bool) -> io::Result<()> {
+    update(workspace, |data| data.show_pages = show)
 }

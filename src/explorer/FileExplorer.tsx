@@ -13,10 +13,13 @@ type Props = {
   files: FileEntry[] | null;
   /** Why the files couldn't be listed, if they couldn't. */
   error?: string;
-  /** A file to highlight, e.g. the note that was just created. */
+  /** A file to highlight: the open note. */
   highlightedPath?: string;
+  /** Notes known to have mistakes. */
+  withMistakes?: ReadonlySet<string>;
   /** The note whose name is being typed, if any. */
   renaming?: Renaming;
+  onOpen: (path: string) => void;
   onTogglePinned: () => void;
   onNewNote: () => void;
 };
@@ -29,6 +32,8 @@ export function FileExplorer({
   error,
   highlightedPath,
   renaming,
+  withMistakes,
+  onOpen,
   onTogglePinned,
   onNewNote,
 }: Props) {
@@ -75,7 +80,10 @@ export function FileExplorer({
           <p className="px-2 text-sm text-neutral-500">This workspace is empty.</p>
         ) : (
           files && (
-            <FileTree entries={files} highlightedPath={highlightedPath} renaming={renaming} />
+            <FileTree entries={files} highlightedPath={highlightedPath} renaming={renaming}
+              withMistakes={withMistakes}
+              onOpen={onOpen}
+            />
           )
         )}
       </nav>
