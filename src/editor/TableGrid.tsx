@@ -6,6 +6,10 @@
 import {
   mdiClosedCaptionOutline,
   mdiCodeBraces,
+  mdiFormatAlignCenter,
+  mdiFormatAlignLeft,
+  mdiFormatAlignRight,
+  mdiPaletteSwatchOutline,
   mdiPageLayoutHeader,
   mdiTableColumnPlusAfter,
   mdiTableColumnRemove,
@@ -13,12 +17,29 @@ import {
   mdiTableRowRemove,
 } from "@mdi/js";
 import { Icon } from "@mdi/react";
+import { redo, undo } from "@codemirror/commands";
 import { EditorView, WidgetType } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as api from "../api";
 import { blockPictures } from "./mathsPictures";
+import { isMac } from "../ui/platform";
 import { editTableAt } from "./tableEditing";
+
+/**
+ * Asked of a text field inside the note when Edit › Undo or Redo is chosen while it has the focus
+ * (detail: "undo" or "redo"). Cancelling it means the field took care of it.
+ */
+export const UNDO_IN_FIELD = "marginalia:undo-in-field";
+
+/** ⌘Z / ⌘⇧Z (Ctrl on Windows and Linux; also Ctrl+Y): which one, if any. */
+function undoKey(event: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }) {
+  if (event.altKey || !(isMac ? event.metaKey : event.ctrlKey)) return null;
+  const key = event.key.toLowerCase();
+  if (key === "z") return event.shiftKey ? "redo" : "undo";
+  if (key === "y" && !isMac) return "redo";
+  return null;
+}
 
 /** Where a cell is: `row` null for the header. */
 type Place = { row: number | null; column: number };
@@ -48,6 +69,7 @@ function TableGrid({ view, source, locate }: Props) {
   const [cells, setCells] = useState<api.TableCells | null>(null);
   const [focused, setFocused] = useState<Place | null>(null);
   const [addingCaption, setAddingCaption] = useState(false);
+  const [styling, setStyling] = useState(false);
   const inputs = useRef(new Map<string, HTMLInputElement>());
   const opened = useRef(false);
 
@@ -86,6 +108,8 @@ function TableGrid({ view, source, locate }: Props) {
       const from = locate();
       view.dispatch({
         changes: { from, to: from + source.length, insert: edited.block },
+        // The cursor stays at the table's start: that's where Undo and Redo bring the note back to.
+        selection: { anchor: from },
         userEvent: "input.table",
       });
     } catch (reason) {
@@ -119,6 +143,9 @@ function TableGrid({ view, source, locate }: Props) {
   }
 
   const rows = cells.rows.length;
+  const style = cells.style;
+  const alignOf = (column: number) => style?.align?.[column] ?? null;
+  const column = focused?.column ?? null;
   const button = (label: string, icon: string, onClick: () => void, extra: { pressed?: boolean; disabled?: boolean } = {}) => (
     <button
       type="button"
@@ -139,11 +166,13 @@ function TableGrid({ view, source, locate }: Props) {
       key={key(place)}
       label={label}
       cell={cell}
+      align={alignOf(place.column)}
       inputRef={(input) => {
         if (input) inputs.current.set(key(place), input);
         else inputs.current.delete(key(place));
       }}
       onFocus={() => setFocused(place)}
+      onUndo={(kind) => (kind === "undo" ? undo : redo)(view)}
       onSave={(text) => change({ action: "setCell", value: { row: place.row, column: place.column, text } }, place)}
       onMove={(step) => {
         const order: Place[] = [
@@ -167,6 +196,14 @@ function TableGrid({ view, source, locate }: Props) {
       role="group"
       aria-label="Table editor"
       className="cm-table-editor"
+      // Escape closes the style menu first.
+      onKeyDownCapture={(event) => {
+        if (event.key === "Escape" && styling) {
+          event.preventDefault();
+          event.stopPropagation();
+          setStyling(false);
+        }
+      }}
       // Leaving the table (clicking in the note, or Escape) shows the picture again.
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
@@ -182,9 +219,38 @@ function TableGrid({ view, source, locate }: Props) {
         <span className="cm-format-separator" />
         {button("Header row", mdiPageLayoutHeader, () => change({ action: "toggleHeader" }), { pressed: !!cells.header })}
         {button("Caption", mdiClosedCaptionOutline, () => setAddingCaption(true), { pressed: cells.caption !== null })}
+        <span className="cm-format-separator" />
+        {(
+          [
+            ["left", "Align left", mdiFormatAlignLeft],
+            ["center", "Align center", mdiFormatAlignCenter],
+            ["right", "Align right", mdiFormatAlignRight],
+          ] as const
+        ).map(([align, label, icon]) => (
+          <span key={align} style={{ display: "contents" }}>
+            {button(label, icon, () => column !== null && change({ action: "setAlign", value: { column, align } }), {
+              pressed: column !== null && alignOf(column) === align,
+              disabled: column === null || !style,
+            })}
+          </span>
+        ))}
+        {button("Table style", mdiPaletteSwatchOutline, () => setStyling((open) => !open), {
+          pressed: styling,
+          disabled: !style,
+        })}
+        <span className="cm-format-separator" />
         {button("Edit as code", mdiCodeBraces, editAsCode)}
       </div>
-      <table role="grid" aria-label="Table cells">
+      {styling && style && (
+        <StyleMenu style={style} hasHeader={!!cells.header} onChange={(action) => change(action)} />
+      )}
+      <table
+        role="grid"
+        aria-label="Table cells"
+        data-lines={style?.lines ?? "custom"}
+        data-striped={!!style?.striped}
+        data-shaded-header={!!style?.shadedHeader}
+      >
         {cells.header && (
           <thead>
             <tr>
@@ -222,15 +288,21 @@ function TableGrid({ view, source, locate }: Props) {
 function CellField({
   label,
   cell,
+  align,
   inputRef,
   onFocus,
+  onUndo,
   onSave,
   onMove,
 }: {
   label: string;
   cell: api.TableCell;
+  /** Its column's alignment, shown as the table draws it. */
+  align: api.TableAlign | null;
   inputRef: (input: HTMLInputElement | null) => void;
   onFocus: () => void;
+  /** Undo (or redo) in the note: the table's last change. */
+  onUndo: (kind: "undo" | "redo") => void;
   onSave: (text: string) => void;
   onMove: (step: "next" | "previous" | "down") => void;
 }) {
@@ -245,10 +317,29 @@ function CellField({
     }
     if (draft !== cell.text) onSave(draft);
   };
+  // While something's typed in the cell, Undo takes that back; otherwise the table's last change.
+  const undoInNote = (kind: "undo" | "redo") => {
+    if (draft !== cell.text) return false;
+    onUndo(kind);
+    return true;
+  };
+  const field = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const input = field.current;
+    const onAsked = (event: Event) => {
+      if (undoInNote((event as CustomEvent<"undo" | "redo">).detail)) event.preventDefault();
+    };
+    input?.addEventListener(UNDO_IN_FIELD, onAsked);
+    return () => input?.removeEventListener(UNDO_IN_FIELD, onAsked);
+  });
   return (
     <input
-      ref={inputRef}
+      ref={(input) => {
+        field.current = input;
+        inputRef(input);
+      }}
       aria-label={label}
+      style={align ? { textAlign: align } : undefined}
       value={draft}
       readOnly={!cell.editable}
       title={cell.editable ? undefined : "Written as code: change it with 'Edit as code'"}
@@ -259,6 +350,11 @@ function CellField({
       onKeyDown={(event) => {
         // Keys typed here are for the table, not for the note around it.
         event.stopPropagation();
+        const kind = undoKey(event);
+        if (kind) {
+          if (undoInNote(kind)) event.preventDefault();
+          return;
+        }
         if (event.key === "Enter") {
           event.preventDefault();
           save();
@@ -274,6 +370,81 @@ function CellField({
         }
       }}
     />
+  );
+}
+
+/** The table's style: its lines, shading, the room in its cells and its columns' widths. */
+function StyleMenu({
+  style,
+  hasHeader,
+  onChange,
+}: {
+  style: api.TableStyle;
+  hasHeader: boolean;
+  onChange: (action: api.TableAction) => void;
+}) {
+  const choice = (label: string, pressed: boolean, onClick: () => void, disabled = false) => (
+    <button
+      key={label}
+      type="button"
+      aria-pressed={pressed}
+      data-pressed={pressed}
+      disabled={disabled}
+      // The cell being typed in keeps the focus.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+  const section = (title: string, custom: boolean, choices: React.ReactNode) => (
+    <div className="cm-table-style-section">
+      <div className="cm-table-style-title">
+        {title}
+        {custom && <span className="cm-table-style-custom"> · custom, written as code</span>}
+      </div>
+      <div className="cm-table-style-choices">{choices}</div>
+    </div>
+  );
+  const lines: [api.TableLines, string][] = [
+    ["all", "All lines"],
+    ["rows", "Between rows"],
+    ["academic", "Academic"],
+    ["none", "No lines"],
+  ];
+  const spacing: [api.TableSpacing, string][] = [
+    ["compact", "Compact"],
+    ["normal", "Normal"],
+    ["roomy", "Roomy"],
+  ];
+  return (
+    <div role="dialog" aria-label="Table style" className="cm-table-style">
+      {section(
+        "Lines",
+        style.lines === null,
+        lines.map(([value, label]) => choice(label, style.lines === value, () => onChange({ action: "setLines", value }))),
+      )}
+      {section("Shading", style.striped === null, [
+        choice("Striped rows", !!style.striped, () => onChange({ action: "setStriped", value: !style.striped })),
+        choice(
+          "Shaded header",
+          !!style.shadedHeader,
+          () => onChange({ action: "setShadedHeader", value: !style.shadedHeader }),
+          !hasHeader,
+        ),
+      ])}
+      {section(
+        "Room in cells",
+        style.spacing === null,
+        spacing.map(([value, label]) =>
+          choice(label, style.spacing === value, () => onChange({ action: "setSpacing", value })),
+        ),
+      )}
+      {section("Column widths", style.widths === null, [
+        choice("Fit content", style.widths === "auto", () => onChange({ action: "setWidths", value: "auto" })),
+        choice("Equal widths", style.widths === "equal", () => onChange({ action: "setWidths", value: "equal" })),
+      ])}
+    </div>
   );
 }
 
@@ -379,6 +550,38 @@ export const tableEditorTheme = EditorView.theme({
   ".cm-table-editor-bar button[data-pressed=true]": { background: "#e5e5e5", color: "#171717" },
   ".cm-table-editor-bar button:disabled": { color: "#d4d4d4" },
   ".cm-table-editor table": { borderCollapse: "collapse", width: "100%" },
+  // The grid looks like the table's style, roughly.
+  ".cm-table-editor table[data-lines=rows] td, .cm-table-editor table[data-lines=rows] th": {
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+  },
+  ".cm-table-editor table[data-lines=academic] td, .cm-table-editor table[data-lines=academic] th, .cm-table-editor table[data-lines=none] td, .cm-table-editor table[data-lines=none] th":
+    { borderColor: "transparent" },
+  ".cm-table-editor table[data-lines=academic]": { borderTop: "2px solid #404040", borderBottom: "2px solid #404040" },
+  ".cm-table-editor table[data-lines=academic] thead th": { borderBottom: "1px solid #737373" },
+  ".cm-table-editor table[data-lines=none]": { outline: "1px dashed #e5e5e5" },
+  ".cm-table-editor table[data-striped=true] tbody tr:nth-child(even)": { background: "#f5f5f5" },
+  ".cm-table-editor table[data-shaded-header=true] th": { background: "#ebebeb" },
+  ".cm-table-editor table[data-shaded-header=false] th": { background: "transparent" },
+  ".cm-table-style": {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px 18px",
+    margin: "2px 0 8px",
+    padding: "10px 12px",
+    border: "1px solid #e5e5e5",
+    borderRadius: "8px",
+    background: "#fff",
+    boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+    fontSize: "12px",
+  },
+  ".cm-table-style-title": { color: "#737373", marginBottom: "4px", fontWeight: "500" },
+  ".cm-table-style-custom": { color: "#a3a3a3", fontWeight: "400" },
+  ".cm-table-style-choices": { display: "flex", gap: "2px", flexWrap: "wrap" },
+  ".cm-table-style-choices button": { padding: "3px 8px", borderRadius: "6px", color: "#404040" },
+  ".cm-table-style-choices button:hover:not(:disabled)": { background: "#f5f5f5" },
+  ".cm-table-style-choices button[data-pressed=true]": { background: "#e5e5e5", color: "#171717" },
+  ".cm-table-style-choices button:disabled": { color: "#d4d4d4" },
   ".cm-table-editor th, .cm-table-editor td": { border: "1px solid #e5e5e5", padding: "0" },
   ".cm-table-editor th": { background: "#fafafa" },
   ".cm-table-editor input": {

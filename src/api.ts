@@ -336,6 +336,12 @@ export type TableAction =
   | { action: "deleteColumn" }
   | { action: "toggleHeader" }
   | { action: "setCaption"; value: string | null }
+  | { action: "setLines"; value: TableLines }
+  | { action: "setStriped"; value: boolean }
+  | { action: "setShadedHeader"; value: boolean }
+  | { action: "setAlign"; value: { column: number; align: TableAlign } }
+  | { action: "setSpacing"; value: TableSpacing }
+  | { action: "setWidths"; value: TableWidths }
   /** `row` null is the header. Text that would break the note is written as plain text. */
   | { action: "setCell"; value: { row: number | null; column: number; text: string } };
 
@@ -359,11 +365,31 @@ export type TableCell = {
   start: number;
 };
 
+/** Lines around every cell, between rows only, academic (top, under the header, bottom), or none. */
+export type TableLines = "all" | "rows" | "academic" | "none";
+export type TableAlign = "left" | "center" | "right";
+/** The room inside cells. */
+export type TableSpacing = "compact" | "normal" | "roomy";
+/** Columns as wide as their content, or sharing the width equally. */
+export type TableWidths = "auto" | "equal";
+
+/** A table's style. Each is null when it's written some other way, as code ("custom"). */
+export type TableStyle = {
+  lines: TableLines | null;
+  striped: boolean | null;
+  shadedHeader: boolean | null;
+  /** Each column's alignment. */
+  align: TableAlign[] | null;
+  spacing: TableSpacing | null;
+  widths: TableWidths | null;
+};
+
 export type TableCells = {
   columns: number;
   header: TableCell[] | null;
   rows: TableCell[][];
   caption: string | null;
+  style: TableStyle;
 };
 
 /** A table's cells, for the table editor. Rejects for tables it can't edit. */

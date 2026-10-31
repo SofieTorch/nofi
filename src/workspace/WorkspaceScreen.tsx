@@ -9,6 +9,7 @@ import { forgetNoteHistory, moveNoteHistory } from "../editor/noteHistory";
 import { NotePane } from "../editor/NotePane";
 import { FileExplorer } from "../explorer/FileExplorer";
 import { isMac } from "../ui/platform";
+import { UNDO_IN_FIELD } from "../editor/TableGrid";
 import { SHOW_SUGGESTIONS } from "../ui/SuggestingInput";
 import { FileHistory } from "./fileHistory";
 import { TopBar } from "./TopBar";
@@ -135,7 +136,8 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     if (focused.getAttribute("role") === "combobox") {
       focused.dispatchEvent(new Event(SHOW_SUGGESTIONS));
     } else if (focused.closest(".cm-editor")) {
-      const view = EditorView.findFromDOM(focused);
+      // From the editor's outer element: its text area can hold a column's editor too.
+      const view = EditorView.findFromDOM(focused.closest<HTMLElement>(".cm-editor")!);
       if (view) startCompletion(view);
     }
   }
@@ -156,8 +158,17 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
    */
   function undoOrRedo(kind: "undo" | "redo") {
     const focused = document.activeElement;
-    if (focused instanceof HTMLElement && focused.closest(".cm-editor")) {
-      const view = EditorView.findFromDOM(focused);
+    // The note's editor: the outermost one (a column has a small editor of its own inside it).
+    let editor = focused instanceof HTMLElement ? focused.closest<HTMLElement>(".cm-editor") : null;
+    while (editor?.parentElement?.closest(".cm-editor")) editor = editor.parentElement.closest<HTMLElement>(".cm-editor");
+    // A field inside the note (like a table's cell) decides itself: its typing, or the note's.
+    if (editor && focused instanceof HTMLInputElement) {
+      const asked = new CustomEvent(UNDO_IN_FIELD, { detail: kind, bubbles: true, cancelable: true });
+      if (focused.dispatchEvent(asked)) document.execCommand?.(kind);
+      return;
+    }
+    if (editor) {
+      const view = EditorView.findFromDOM(editor);
       if (view) (kind === "undo" ? undo : redo)(view);
       return;
     }

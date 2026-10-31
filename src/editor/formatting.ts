@@ -44,6 +44,8 @@ export type Kind =
   | "code"
   | "math"
   | "list-item"
+  /** `- [ ] task` or `- [x] task`: a checklist's task. Its marker is the `- [ ] `. */
+  | "task"
   | "comment";
 
 /** Typst's style functions, written like `#highlight[text]`, and the kind of formatting each is. */
@@ -92,6 +94,8 @@ export type Span = Range & {
   display?: boolean;
   /** Style functions only: their settings, like `fill: red` in `#text(fill: red)[…]`. */
   args?: string;
+  /** Tasks only: whether it's done (`[x]`). */
+  checked?: boolean;
   /** Code blocks only: whether its lines are numbered, and which lines are highlighted (from 1). */
   numbers?: boolean;
   highlights?: number[];
@@ -212,6 +216,14 @@ function scan(
       if (list) {
         const from = i + list[0].length - list[1].length;
         const marker = { from, to: from + list[1].length };
+        // A bullet followed by a box, [ ] or [x], is a task.
+        const box = /^\[([ xX])\](?: |$)/.exec(text.slice(marker.to, lineEnd));
+        if (box && /^[-*+]/.test(list[1]) && !(syntax === syntaxes.typst && list[1].startsWith("+"))) {
+          const task = { from, to: marker.to + box[0].length };
+          spans.push({ kind: "task", ...task, checked: box[1] !== " ", markers: [task] });
+          i = task.to;
+          continue;
+        }
         spans.push({ kind: "list-item", ...marker, markers: [marker] });
         i += list[0].length;
         continue;
@@ -430,7 +442,7 @@ export function hiddenMarkers(spans: Span[], cursors: readonly Range[], text: st
     to: (text.indexOf("\n", span.from) + 1 || text.length + 1) - 1,
   });
   return spans.flatMap((span) => {
-    if (["list-item", "math", "comment", "codeblock"].includes(span.kind)) return [];
+    if (["list-item", "task", "math", "comment", "codeblock"].includes(span.kind)) return [];
     const editing = touches(span.kind === "heading" ? lineOf(span) : span, cursors);
     return editing ? [] : span.markers;
   });

@@ -34,6 +34,7 @@ export type BlockType =
   | "heading-3"
   | "bulleted-list"
   | "numbered-list"
+  | "to-do-list"
   | "quote"
   | "callout";
 
@@ -419,11 +420,13 @@ function unbalancedBrackets(text: string, from: number, to: number) {
 const LINE_STARTS: Record<Format, { pattern: RegExp; type: (match: RegExpExecArray) => BlockType }[]> = {
   typst: [
     { pattern: /^(=+) /, type: (m) => `heading-${Math.min(m[1].length, 3)}` as BlockType },
+    { pattern: /^(\s*)- \[[ xX]\] /, type: () => "to-do-list" },
     { pattern: /^(\s*)- /, type: () => "bulleted-list" },
     { pattern: /^(\s*)\+ /, type: () => "numbered-list" },
   ],
   markdown: [
     { pattern: /^(#{1,6}) /, type: (m) => `heading-${Math.min(m[1].length, 3)}` as BlockType },
+    { pattern: /^(\s*)[-*+] \[[ xX]\] /, type: () => "to-do-list" },
     { pattern: /^(\s*)[-*+] /, type: () => "bulleted-list" },
     { pattern: /^(\s*)\d+\. /, type: () => "numbered-list" },
     { pattern: /^> ?/, type: () => "quote" },
@@ -504,6 +507,7 @@ export function turnInto(text: string, format: Format, selection: Range, type: B
     if (heading) return (format === "typst" ? "=" : "#").repeat(Number(heading[1])) + " ";
     if (type === "bulleted-list") return `${indent}- `;
     if (type === "numbered-list") return `${indent}${format === "typst" ? "+" : "1."} `;
+    if (type === "to-do-list") return `${indent}- [ ] `;
     if (type === "quote" && format === "markdown") return "> ";
     return "";
   };

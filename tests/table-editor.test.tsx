@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../src/api";
 import App from "../src/App";
-import { file, setUpFakeBackend } from "./support/fake-backend";
+import { chooseInMenu, file, setUpFakeBackend } from "./support/fake-backend";
 
 vi.mock("../src/api");
 
@@ -20,6 +20,14 @@ const cells: api.TableCells = {
   header: [cell("*Model*", 37), cell("*Year*", 46)],
   rows: [[cell("BERT", 57), cell("2018", 65)]],
   caption: null,
+  style: {
+    lines: "all",
+    striped: false,
+    shadedHeader: false,
+    align: ["left", "left"],
+    spacing: "normal",
+    widths: "auto",
+  },
 };
 const EDITED = TABLE.replace("2018", "2019");
 
@@ -196,5 +204,176 @@ describe("The table editor", () => {
 
     await vi.waitFor(() => expect(editor).toHaveTextContent("columns: 2"));
     expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+  });
+});
+
+describe("Undo in the table editor", () => {
+  const ADDED = "#table(\n  columns: 2,\n  table.header[*Model*][*Year*],\n  [BERT], [2018],\n  [], [],\n)";
+
+  beforeEach(() => {
+    vi.mocked(api.editTable).mockResolvedValue({ block: ADDED, cursor: 70 });
+  });
+
+  async function addRow(editor: HTMLElement) {
+    await openTableEditor(editor);
+    await userEvent.click(await cellField("Row 1, column 2"));
+    await userEvent.click(within(await editorBar()).getByRole("button", { name: "Add row below" }));
+    await vi.waitFor(() => expect(textIn(editor)).toBe(`Intro.\n${ADDED}\nAfter.`));
+  }
+
+  it("Edit › Undo takes back adding a row", async () => {
+    const editor = await openNote();
+    await addRow(editor);
+
+    await chooseInMenu("Edit › Undo");
+
+    await vi.waitFor(() => expect(textIn(editor)).toBe(`Intro.\n${TABLE}\nAfter.`));
+  });
+
+  it("Ctrl+Z in a cell takes back adding a row, and the editor stays open", async () => {
+    const editor = await openNote();
+    await addRow(editor);
+
+    await userEvent.keyboard("{Control>}z{/Control}");
+
+    await vi.waitFor(() => expect(textIn(editor)).toBe(`Intro.\n${TABLE}\nAfter.`));
+    expect(screen.getByRole("grid")).toBeInTheDocument();
+  });
+
+  it("Undo leaves the note's cursor at the table, so the note doesn't jump to its start", async () => {
+    const editor = await openNote();
+    await addRow(editor);
+
+    await userEvent.keyboard("{Control>}z{/Control}");
+
+    await vi.waitFor(() => expect(textIn(editor)).toBe(`Intro.\n${TABLE}\nAfter.`));
+    expect(EditorView.findFromDOM(editor)!.state.selection.main.head).toBe("Intro.\n".length);
+  });
+
+  it("Ctrl+Shift+Z puts the row back", async () => {
+    const editor = await openNote();
+    await addRow(editor);
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await vi.waitFor(() => expect(textIn(editor)).toBe(`Intro.\n${TABLE}\nAfter.`));
+
+    await userEvent.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+
+    await vi.waitFor(() => expect(textIn(editor)).toBe(`Intro.\n${ADDED}\nAfter.`));
+  });
+
+  it("Ctrl+Z while typing in a cell still undoes the typing first", async () => {
+    await openTableEditor(await openNote());
+    const year = await cellField("Row 1, column 2");
+
+    await userEvent.type(year, "9");
+    await userEvent.keyboard("{Control>}z{/Control}");
+
+    expect(api.editTable).not.toHaveBeenCalled();
+  });
+});
+
+describe("Styling a table", () => {
+  async function openStyleMenu() {
+    await openTableEditor(await openNote());
+    await userEvent.click(within(await editorBar()).getByRole("button", { name: "Table style" }));
+    return screen.findByRole("dialog", { name: "Table style" });
+  }
+  const withStyle = (style: Partial<api.TableStyle>) =>
+    vi.mocked(api.readTable).mockResolvedValue({ ...cells, style: { ...cells.style, ...style } });
+
+  it("the style menu shows the table's lines, and choosing others sets them", async () => {
+    const menu = await openStyleMenu();
+
+    expect(within(menu).getByRole("button", { name: "All lines" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(within(menu).getByRole("button", { name: "Academic" }));
+
+    expect(api.editTable).toHaveBeenCalledWith(TABLE, expect.any(Number), { action: "setLines", value: "academic" });
+  });
+
+  it("offers every kind of lines", async () => {
+    const menu = await openStyleMenu();
+
+    for (const name of ["All lines", "Between rows", "Academic", "No lines"]) {
+      expect(within(menu).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("striped rows and a shaded header switch on and off", async () => {
+    withStyle({ striped: true });
+    const menu = await openStyleMenu();
+
+    const striped = within(menu).getByRole("button", { name: "Striped rows" });
+    expect(striped).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(striped);
+    expect(api.editTable).toHaveBeenCalledWith(TABLE, expect.any(Number), { action: "setStriped", value: false });
+
+    await userEvent.click(within(menu).getByRole("button", { name: "Shaded header" }));
+    // (The table has changed by now.)
+    expect(api.editTable).toHaveBeenLastCalledWith(expect.any(String), expect.any(Number), {
+      action: "setShadedHeader",
+      value: true,
+    });
+  });
+
+  it("a shaded header needs a header row", async () => {
+    vi.mocked(api.readTable).mockResolvedValue({ ...cells, header: null });
+    const menu = await openStyleMenu();
+
+    expect(within(menu).getByRole("button", { name: "Shaded header" })).toBeDisabled();
+  });
+
+  it("sets the room inside cells", async () => {
+    const menu = await openStyleMenu();
+
+    expect(within(menu).getByRole("button", { name: "Normal" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(within(menu).getByRole("button", { name: "Compact" }));
+
+    expect(api.editTable).toHaveBeenCalledWith(TABLE, expect.any(Number), { action: "setSpacing", value: "compact" });
+  });
+
+  it("makes the columns equal, or fit their content", async () => {
+    const menu = await openStyleMenu();
+
+    expect(within(menu).getByRole("button", { name: "Fit content" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(within(menu).getByRole("button", { name: "Equal widths" }));
+
+    expect(api.editTable).toHaveBeenCalledWith(TABLE, expect.any(Number), { action: "setWidths", value: "equal" });
+  });
+
+  it("a setting written as code shows as custom, with no choice picked", async () => {
+    withStyle({ lines: null });
+    const menu = await openStyleMenu();
+
+    expect(within(menu).getByRole("button", { name: "All lines" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(menu).getByText(/custom/i)).toBeInTheDocument();
+  });
+
+  it("Escape closes the style menu, and the table editor stays open", async () => {
+    await openStyleMenu();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Table style" })).not.toBeInTheDocument();
+    expect(screen.getByRole("grid")).toBeInTheDocument();
+  });
+});
+
+describe("Aligning a column", () => {
+  it("the bar aligns the column being edited", async () => {
+    await openTableEditor(await openNote());
+    await userEvent.click(await cellField("Row 1, column 2"));
+
+    await userEvent.click(within(await editorBar()).getByRole("button", { name: "Align right" }));
+
+    expect(api.editTable).toHaveBeenCalledWith(TABLE, 65, { action: "setAlign", value: { column: 1, align: "right" } });
+  });
+
+  it("shows the column's alignment, in the bar and in its cells", async () => {
+    vi.mocked(api.readTable).mockResolvedValue({ ...cells, style: { ...cells.style, align: ["left", "center"] } });
+    await openTableEditor(await openNote());
+    await userEvent.click(await cellField("Row 1, column 2"));
+
+    expect(within(await editorBar()).getByRole("button", { name: "Align center" })).toHaveAttribute("aria-pressed", "true");
+    expect(await cellField("Row 1, column 2")).toHaveStyle({ textAlign: "center" });
   });
 });

@@ -158,11 +158,11 @@ mod changing_a_table {
 
     #[test]
     fn the_tables_other_settings_are_kept() {
-        let styled = "#table(columns: 2, stroke: none, align: left, [a], [b])";
+        let styled = "#table(columns: 2, gutter: 3pt, stroke: 2pt + blue, [a], [b])";
 
         let (block, _) = edit(styled, "[a]", TableAction::AddRowBelow);
 
-        assert!(block.contains("  stroke: none,\n  align: left,\n"), "{block}");
+        assert!(block.contains("  gutter: 3pt,\n  stroke: 2pt + blue,\n"), "{block}");
     }
 
     #[test]

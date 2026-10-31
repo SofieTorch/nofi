@@ -32,7 +32,7 @@ mod what_is_offered {
             "heading-1", "heading-2", "heading-3", "bulleted-list", "numbered-list", "term-list",
             "bold", "italic", "highlight", "footnote", "link", "quote", "inline-maths",
             "display-maths", "matrix", "table", "figure", "code-block", "columns", "column-break",
-            "page-break", "callout", "divider", "centered", "outline", "comment",
+            "page-break", "callout", "divider", "centered", "outline", "comment", "to-do",
         ] {
             assert!(ids.contains(&id.to_string()), "missing {id}");
         }

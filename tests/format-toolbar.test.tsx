@@ -357,6 +357,7 @@ describe("Turn into", () => {
       "Heading 3",
       "Bulleted list",
       "Numbered list",
+      "To-do list",
       "Quote",
       "Callout",
     ]);

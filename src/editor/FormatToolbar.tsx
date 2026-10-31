@@ -101,6 +101,7 @@ const BLOCK_TYPES: { type: BlockType; label: string }[] = [
   { type: "heading-3", label: "Heading 3" },
   { type: "bulleted-list", label: "Bulleted list" },
   { type: "numbered-list", label: "Numbered list" },
+  { type: "to-do-list", label: "To-do list" },
   { type: "quote", label: "Quote" },
   { type: "callout", label: "Callout" },
 ];

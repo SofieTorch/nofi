@@ -76,3 +76,21 @@
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
   }
 }
+
+/* Checklists: a task's box, and done tasks dimmed. */
+.cm-task-box {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.45em;
+  vertical-align: -0.12em;
+}
+.cm-task-box input {
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0;
+  accent-color: #737373;
+  cursor: pointer;
+}
+.cm-line.cm-task-done {
+  color: #a3a3a3;
+}

@@ -93,7 +93,10 @@ class BlockWidget extends WidgetType {
     element.addEventListener("mousedown", (event) => {
       event.preventDefault();
       if (this.isTable) {
-        view.dispatch({ effects: editTableAt.of(view.posAtDOM(element)) });
+        // The note's cursor goes to the table's start (which doesn't show its code), so Undo of a
+        // change made in the table puts it back there rather than wherever it was before.
+        const at = view.posAtDOM(element);
+        view.dispatch({ selection: { anchor: at }, effects: editTableAt.of(at) });
         return;
       }
       view.dispatch({ selection: { anchor: view.posAtDOM(element) + 1 } });

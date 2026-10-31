@@ -139,6 +139,43 @@ class DividerWidget extends WidgetType {
   }
 }
 
+/** A task's box: ticking it writes [x] (or [ ] again) in the note. */
+class TaskBox extends WidgetType {
+  constructor(
+    readonly checked: boolean,
+    readonly label: string,
+  ) {
+    super();
+  }
+  eq(other: TaskBox) {
+    return other.checked === this.checked && other.label === this.label;
+  }
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement("span");
+    wrapper.className = "cm-task-box";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = this.checked;
+    box.setAttribute("aria-label", this.label);
+    // Ticking doesn't move the cursor.
+    box.addEventListener("mousedown", (event) => event.preventDefault());
+    box.addEventListener("click", () => {
+      const at = view.posAtDOM(wrapper);
+      const open = view.state.sliceDoc(at, at + 20).indexOf("[");
+      if (open < 0) return;
+      const mark = at + open + 1;
+      view.dispatch({ changes: { from: mark, to: mark + 1, insert: this.checked ? " " : "x" }, userEvent: "input.task" });
+    });
+    wrapper.append(box);
+    return wrapper;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+const taskDone = Decoration.line({ class: "cm-task-done" });
+
 const hide = Decoration.replace({});
 const marker = Decoration.mark({ class: "cm-marker" });
 const content = {
@@ -245,6 +282,17 @@ function decorate(view: EditorView, format: Format): DecorationSet {
       }
       continue;
     }
+    if (span.kind === "task") {
+      const line = view.state.doc.lineAt(span.from);
+      if (span.checked) decorations.push(taskDone.range(line.from));
+      if (isBeingEdited(span, cursors)) {
+        decorations.push(marker.range(span.from, span.to));
+      } else {
+        const widget = new TaskBox(!!span.checked, plain(text.slice(span.to, line.to)).trim());
+        decorations.push(Decoration.replace({ widget }).range(span.from, span.to));
+      }
+      continue;
+    }
     if (drawn.includes(span)) {
       const widget = new MathsWidget(text.slice(span.from, span.to), !!span.display);
       decorations.push(Decoration.replace({ widget }).range(span.from, span.to));
@@ -302,6 +350,7 @@ function decorationsFor(view: EditorView, span: Span): Ranged<Decoration>[] {
     case "comment":
       return [whole[span.kind].range(span.from, span.to)];
     case "list-item":
+    case "task":
     case "divider":
     // Code blocks are shown by codeBlocks.ts.
     case "codeblock":

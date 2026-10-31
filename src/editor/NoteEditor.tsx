@@ -3,16 +3,9 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { type RefObject, useEffect, useRef } from "react";
 import type { Format } from "./formatting";
-import { codeBlocks } from "./codeBlocks";
-import { drawnBlocks } from "./drawnBlocks";
-import { formatToolbar } from "./selectionToolbar";
-import { livePreview } from "./livePreview";
+import { editorFeatures } from "./features";
 import { recallNoteState, rememberNoteState } from "./noteHistory";
-import { propertiesField } from "./propertiesField";
 import { typstProblems } from "./typstProblems";
-import { slashMenu } from "./slashMenu";
-import { tableBar } from "./tableBar";
-import { suggestions, typstSuggestions } from "./typstSuggestions";
 import type { Problem } from "../api";
 
 type Props = {
@@ -49,15 +42,8 @@ export function NoteEditor({
     const extensions = [
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      EditorView.lineWrapping,
       EditorView.contentAttributes.of({ "aria-label": name, spellcheck: "true" }),
-      livePreview(format),
-      propertiesField(format),
-      codeBlocks(format),
-      formatToolbar(format),
-      format === "typst" ? drawnBlocks() : [],
-      format === "typst" ? tableBar() : [],
-      format === "typst" ? typstSuggestions([slashMenu("typst")]) : suggestions([slashMenu("markdown")]),
+      editorFeatures(format),
       format === "typst" ? typstProblems((problems) => onProblemsRef.current?.(problems)) : [],
       EditorView.updateListener.of((update) => {
         if (update.docChanged || update.selectionSet) rememberNoteState(historyKey, update.state);
