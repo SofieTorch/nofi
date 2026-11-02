@@ -10,6 +10,8 @@ const REDRAW_DELAY_MS = 200;
 type Props = {
   /** The note's current text (Typst). */
   text: string;
+  /** The note's path in the workspace: it can use the workspace's files, like images. */
+  path?: string;
   /** Called with a position in the text when a page is clicked. */
   onJump: (position: number) => void;
   /** Replaces the note's text, e.g. after a page setting changed. */
@@ -20,7 +22,7 @@ type Props = {
  * The note drawn as real pages by Typst, like the PDF it would become. Redrawn as you type; if
  * the note has a mistake, the last good pages stay up with the mistake explained above them.
  */
-export function PagesPane({ text, onJump, onChangeText }: Props) {
+export function PagesPane({ text, path, onJump, onChangeText }: Props) {
   const [pages, setPages] = useState<api.PagePicture[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [mistake, setMistake] = useState<string>();
@@ -31,7 +33,7 @@ export function PagesPane({ text, onJump, onChangeText }: Props) {
   useEffect(() => {
     const draw = () => {
       const drawing = ++latest.current;
-      api.renderPages(text).then(
+      (path ? api.renderPages(text, path) : api.renderPages(text)).then(
         (drawn) => {
           if (drawing !== latest.current) return;
           setPages(drawn);
@@ -48,7 +50,7 @@ export function PagesPane({ text, onJump, onChangeText }: Props) {
     }
     const timer = setTimeout(draw, REDRAW_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [text]);
+  }, [text, path]);
 
   async function jumpFromClick(index: number, event: React.MouseEvent<HTMLImageElement>) {
     const box = event.currentTarget.getBoundingClientRect();

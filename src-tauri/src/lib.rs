@@ -1,6 +1,9 @@
+pub mod assets;
 pub mod completions;
+pub mod external;
 pub mod files;
 pub mod layout;
+pub mod links;
 pub mod maths;
 mod menu;
 pub mod notes;
@@ -8,9 +11,11 @@ pub mod page_settings;
 pub mod pages;
 pub mod problems;
 pub mod properties;
+pub mod search;
 pub mod slash;
 pub mod tables;
 mod typst_world;
+pub mod watch;
 pub mod workspace;
 
 use files::FileEntry;
@@ -47,9 +52,26 @@ fn settings(app: &AppHandle) -> Settings {
     Settings::at(config_dir.join("settings.json"))
 }
 
+/// Watches the open workspace's folder, telling the window ("files-changed") when files come and go.
+#[derive(Default)]
+struct WorkspaceWatcher(Mutex<Option<Box<dyn std::any::Any + Send>>>);
+
 fn mark_open(app: &AppHandle, current: &CurrentWorkspace, workspace: Option<&Workspace>) {
     current.set(workspace.map(|w| w.path.clone()));
     menu::set_workspace_open(app, workspace.is_some());
+    // Watch the new workspace (the old one's watcher stops when dropped).
+    let watcher = workspace.and_then(|w| {
+        let app = app.clone();
+        watch::watch_workspace(&w.path, move || {
+            use tauri::Emitter;
+            let _ = app.emit("files-changed", ());
+        })
+        .ok()
+        .map(|watcher| Box::new(watcher) as Box<dyn std::any::Any + Send>)
+    });
+    if let Some(state) = app.try_state::<WorkspaceWatcher>() {
+        *state.0.lock().unwrap() = watcher;
+    }
 }
 
 #[tauri::command]
@@ -115,6 +137,13 @@ fn create_note(current: State<CurrentWorkspace>, format: Option<NoteFormat>) -> 
     notes::create_note(&current.path()?, format.unwrap_or_default()).map_err(|e| e.to_string())
 }
 
+/// Creates an empty note at a path (for a link to a note that doesn't exist yet) and returns it.
+#[tauri::command]
+fn create_note_at(current: State<CurrentWorkspace>, path: String) -> Result<String, NoteError> {
+    let workspace = current.path().map_err(NoteError::Io)?;
+    notes::create_note_at(&workspace, &path)
+}
+
 /// Gives a note a new name (without extension), keeping its format and folder.
 /// Returns its new path relative to the workspace.
 #[tauri::command]
@@ -157,6 +186,93 @@ async fn render_maths(maths: String) -> Result<String, String> {
 fn remove_empty_note(current: State<CurrentWorkspace>, path: String) -> Result<(), NoteError> {
     let workspace = current.path().map_err(NoteError::Io)?;
     notes::remove_empty_note(&workspace, &path)
+}
+
+/// Deletes a file (path relative to the workspace) by sending it to the system's Trash.
+#[tauri::command]
+fn delete_file(current: State<CurrentWorkspace>, path: String) -> Result<(), NoteError> {
+    let workspace = current.path().map_err(NoteError::Io)?;
+    notes::delete_file_with(&workspace, &path, |file| {
+        trash::delete(file).map_err(|e| std::io::Error::other(e.to_string()))
+    })
+}
+
+/// The lines of the workspace's notes with some text in them. Async, so it never blocks the window.
+#[tauri::command]
+async fn search_notes(current: State<'_, CurrentWorkspace>, query: String) -> Result<Vec<search::TextMatch>, String> {
+    Ok(search::search_notes(&current.path()?, &query))
+}
+
+/// The links between the workspace's notes, for the graph view.
+#[tauri::command]
+async fn note_links(current: State<'_, CurrentWorkspace>) -> Result<Vec<links::NoteLink>, String> {
+    Ok(links::note_links(&current.path()?))
+}
+
+/// Saves a pasted (or dropped) image in the workspace's `assets` folder; returns its path there.
+/// The image comes as the request's raw body, its name in the "name" header.
+#[tauri::command]
+fn save_asset(current: State<CurrentWorkspace>, request: tauri::ipc::Request) -> Result<String, NoteError> {
+    let workspace = current.path().map_err(NoteError::Io)?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(NoteError::Io("No image was sent.".into()));
+    };
+    let name = request.headers().get("name").and_then(|v| v.to_str().ok()).unwrap_or("image.png");
+    assets::save_asset(&workspace, &percent_decode(name), bytes)
+}
+
+/// Header values are plain ASCII: names are sent percent-encoded.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match (bytes[i], text.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A file in the workspace, as raw bytes (for images in the editor and the PDF reader).
+#[tauri::command]
+async fn read_workspace_file(current: State<'_, CurrentWorkspace>, path: String) -> Result<tauri::ipc::Response, NoteError> {
+    let workspace = current.path().map_err(NoteError::Io)?;
+    Ok(tauri::ipc::Response::new(assets::read_workspace_file(&workspace, &path)?))
+}
+
+/// Opens a website (or email address) from a link, in the browser (or mail app).
+#[tauri::command]
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = external::checked_url(&url)?;
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Opens a workspace file from a link in its own app (for files the app doesn't show itself).
+#[tauri::command]
+fn open_file(app: AppHandle, current: State<CurrentWorkspace>, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let file = external::checked_file(&current.path()?, &path)?;
+    app.opener().open_path(file.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// How the editor behaves (app-wide settings).
+#[tauri::command]
+fn get_editor_settings(app: AppHandle) -> workspace::EditorSettings {
+    workspace::editor_settings(&settings(&app))
+}
+
+#[tauri::command]
+fn save_editor_settings(app: AppHandle, editor: workspace::EditorSettings) -> Result<(), String> {
+    workspace::save_editor_settings(&settings(&app), &editor).map_err(|e| e.to_string())
 }
 
 /// Redoes creating a note: brings it back, empty, at the same place.
@@ -223,8 +339,12 @@ async fn suggest_properties(
 
 /// The mistakes in a Typst note, explained, with fixes.
 #[tauri::command]
-async fn check_note(note: String) -> Vec<problems::Problem> {
-    problems::check_note(&note)
+async fn check_note(current: State<'_, CurrentWorkspace>, note: String, path: Option<String>) -> Result<Vec<problems::Problem>, String> {
+    // A note in the open workspace can use its files (like images).
+    Ok(match (path, current.path()) {
+        (Some(path), Ok(workspace)) => problems::check_note_at(&note, &workspace, &path),
+        _ => problems::check_note(&note),
+    })
 }
 
 /// The "/" menu's commands for a note format.
@@ -256,9 +376,14 @@ fn save_show_pages(
 #[tauri::command]
 async fn render_pages(
     open: State<'_, OpenPages>,
+    current: State<'_, CurrentWorkspace>,
     note: String,
+    path: Option<String>,
 ) -> Result<Vec<pages::PagePicture>, String> {
-    let drawn = pages::render_pages(&note)?;
+    let drawn = match (path, current.path()) {
+        (Some(path), Ok(workspace)) => pages::render_pages_at(&note, &workspace, &path)?,
+        _ => pages::render_pages(&note)?,
+    };
     let pictures = drawn.pictures();
     *open.0.lock().unwrap() = Some(drawn);
     Ok(pictures)
@@ -298,6 +423,7 @@ fn edit_table(block: String, cursor: usize, action: tables::TableAction) -> Resu
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(WorkspaceWatcher::default())
         .plugin(tauri_plugin_dialog::init())
         .manage(CurrentWorkspace::default())
         .manage(OpenPages::default())
@@ -318,6 +444,7 @@ pub fn run() {
             get_explorer_layout,
             save_explorer_layout,
             create_note,
+            create_note_at,
             rename_note,
             read_note,
             save_note,
@@ -328,6 +455,15 @@ pub fn run() {
             page_position,
             remove_empty_note,
             restore_empty_note,
+            delete_file,
+            search_notes,
+            note_links,
+            save_asset,
+            open_url,
+            open_file,
+            read_workspace_file,
+            get_editor_settings,
+            save_editor_settings,
             parse_properties,
             write_properties,
             read_page_settings,

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../src/api";
 import App from "../src/App";
-import { chooseInMenu, file, folder, setUpFakeBackend } from "./support/fake-backend";
+import { chooseInMenu, file, filesChangedOnDisk, folder, setUpFakeBackend } from "./support/fake-backend";
 
 vi.mock("../src/api");
 
@@ -267,5 +267,29 @@ describe("File explorer: pinned or auto-hidden", () => {
     await userEvent.click(pinButton());
 
     expect(api.saveExplorerLayout).toHaveBeenCalledWith({ side: "left", mode: "auto-hide" });
+  });
+});
+
+describe("File explorer: keeping up with the folder", () => {
+  it("a file made outside the app (in Finder, another app, a sync) shows up by itself", async () => {
+    vi.mocked(api.listFiles).mockResolvedValue([file("ideas.md")]);
+    await renderOpenWorkspace();
+    await screen.findByText("ideas.md");
+
+    vi.mocked(api.listFiles).mockResolvedValue([file("ideas.md"), file("Downloaded.pdf")]);
+    await filesChangedOnDisk();
+
+    expect(await screen.findByText("Downloaded.pdf")).toBeInTheDocument();
+  });
+
+  it("a file deleted outside the app goes away", async () => {
+    vi.mocked(api.listFiles).mockResolvedValue([file("ideas.md"), file("old.typ")]);
+    await renderOpenWorkspace();
+    await screen.findByText("old.typ");
+
+    vi.mocked(api.listFiles).mockResolvedValue([file("ideas.md")]);
+    await filesChangedOnDisk();
+
+    await vi.waitFor(() => expect(screen.queryByText("old.typ")).not.toBeInTheDocument());
   });
 });

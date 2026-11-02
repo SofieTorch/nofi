@@ -94,3 +94,59 @@
 .cm-line.cm-task-done {
   color: #a3a3a3;
 }
+
+/* While a block is dragged by its handle. */
+body.cm-dragging-block,
+body.cm-dragging-block * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* While dragging the line between panes: its cursor everywhere, and no text gets selected. */
+body.resizing-row,
+body.resizing-row * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.resizing-column,
+body.resizing-column * {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
+/* The PDF reader's text, laid over each page so it can be selected (from pdf.js's own styles). */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer ::selection {
+  background: rgba(0, 100, 255, 0.25);
+}

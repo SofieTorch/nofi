@@ -35,8 +35,18 @@ pub struct Fix {
 /// each one is tried, and kept if nothing is wrong anymore from the mistake to the end of the fix.
 /// (Mistakes further on that the fix uncovers don't count: an unclosed `$` hides everything after it.)
 pub fn check_note(note: &str) -> Vec<Problem> {
-    let (errors, warnings) = diagnose(note);
-    let world = NoteWorld::new(note.to_string());
+    check_with(note, &|text: &str| NoteWorld::new(text.to_string()))
+}
+
+/// Like `check_note`, for a note in a workspace (path relative to its folder): it can use the
+/// workspace's files, like images.
+pub fn check_note_at(note: &str, workspace: &std::path::Path, path: &str) -> Vec<Problem> {
+    check_with(note, &|text: &str| NoteWorld::at(text.to_string(), workspace, path))
+}
+
+fn check_with(note: &str, world_of: &dyn Fn(&str) -> NoteWorld) -> Vec<Problem> {
+    let (errors, warnings) = diagnose(note, world_of);
+    let world = world_of(note);
     errors
         .iter()
         .chain(warnings.iter())
@@ -44,21 +54,21 @@ pub fn check_note(note: &str) -> Vec<Problem> {
             let mut problem = problem(note, &world, diagnostic);
             if problem.severity == "error" {
                 let (from, to) = (problem.from, problem.to);
-                problem.fixes.retain(|fix| helps(note, from, to, fix));
+                problem.fixes.retain(|fix| helps(note, from, to, fix, world_of));
             }
             problem
         })
         .collect()
 }
 
-fn helps(note: &str, from: usize, to: usize, fix: &Fix) -> bool {
+fn helps(note: &str, from: usize, to: usize, fix: &Fix, world_of: &dyn Fn(&str) -> NoteWorld) -> bool {
     let fixed = apply(note, fix);
     let grown = fix.insert.encode_utf16().count() as isize - (fix.to - fix.from) as isize;
     let shifted = |at: usize| if at >= fix.to { (at as isize + grown) as usize } else { at };
     let start = from.min(fix.from);
     let end = shifted(to).max(fix.from + fix.insert.encode_utf16().count());
-    let world = NoteWorld::new(fixed.clone());
-    diagnose(&fixed).0.iter().all(|error| {
+    let world = world_of(&fixed);
+    diagnose(&fixed, world_of).0.iter().all(|error| {
         let Some(range) = world.range(error.span) else { return true };
         let error_from = fixed[..range.start].encode_utf16().count();
         let error_to = fixed[..range.end].encode_utf16().count();
@@ -66,8 +76,8 @@ fn helps(note: &str, from: usize, to: usize, fix: &Fix) -> bool {
     })
 }
 
-fn diagnose(note: &str) -> (Vec<SourceDiagnostic>, Vec<SourceDiagnostic>) {
-    let world = NoteWorld::new(note.to_string());
+fn diagnose(note: &str, world_of: &dyn Fn(&str) -> NoteWorld) -> (Vec<SourceDiagnostic>, Vec<SourceDiagnostic>) {
+    let world = world_of(note);
     let result = typst::compile::<PagedDocument>(&world);
     let errors = result.output.err().map(|errors| errors.to_vec()).unwrap_or_default();
     (errors, result.warnings.to_vec())

@@ -30,6 +30,8 @@ typst-layout = "0.15.1"
 typst-ide = "0.15.1"
 yaml-rust2 = "0.13"
 typst-kit = { version = "0.15.1", default-features = false, features = ["scan-fonts", "embedded-fonts"] }
+trash = "5.2.9"
+notify-debouncer-mini = "0.7.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

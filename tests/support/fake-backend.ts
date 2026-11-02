@@ -5,10 +5,12 @@ import { vi } from "vitest";
 import * as api from "../../src/api";
 import { forgetMathsPictures } from "../../src/editor/mathsPictures";
 import { forgetFonts } from "../../src/editor/fonts";
+import { forgetPictures } from "../../src/editor/images";
 import { forgetSlashCommands } from "../../src/editor/slashMenu";
 import { forgetTableReads } from "../../src/editor/TableGrid";
 
 let menuHandlers: ((action: api.MenuAction) => void)[] = [];
+let fileHandlers: (() => void)[] = [];
 
 /** Defaults: first launch, no recent workspaces, an empty workspace, every call succeeds. */
 export function setUpFakeBackend() {
@@ -17,7 +19,15 @@ export function setUpFakeBackend() {
   forgetSlashCommands();
   forgetFonts();
   forgetTableReads();
+  forgetPictures();
   menuHandlers = [];
+  fileHandlers = [];
+  vi.mocked(api.onFilesChanged).mockImplementation(async (handler) => {
+    fileHandlers.push(handler);
+    return () => {
+      fileHandlers = fileHandlers.filter((h) => h !== handler);
+    };
+  });
   vi.mocked(api.getLastWorkspace).mockResolvedValue(null);
   vi.mocked(api.getRecentWorkspaces).mockResolvedValue([]);
   vi.mocked(api.closeWorkspace).mockResolvedValue();
@@ -33,6 +43,16 @@ export function setUpFakeBackend() {
   vi.mocked(api.renderMaths).mockResolvedValue('<svg xmlns="http://www.w3.org/2000/svg"/>');
   vi.mocked(api.removeEmptyNote).mockResolvedValue();
   vi.mocked(api.restoreEmptyNote).mockResolvedValue();
+  vi.mocked(api.deleteFile).mockResolvedValue();
+  vi.mocked(api.createNoteAt).mockImplementation(async (path) => path);
+  vi.mocked(api.searchNotes).mockResolvedValue([]);
+  vi.mocked(api.noteLinks).mockResolvedValue([]);
+  vi.mocked(api.openUrl).mockResolvedValue();
+  vi.mocked(api.openFile).mockResolvedValue();
+  vi.mocked(api.saveAsset).mockImplementation(async (name) => `assets/${name}`);
+  vi.mocked(api.readWorkspaceFile).mockResolvedValue(new ArrayBuffer(8));
+  vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: true });
+  vi.mocked(api.saveEditorSettings).mockResolvedValue();
   vi.mocked(api.parseProperties).mockResolvedValue([]);
   vi.mocked(api.writeProperties).mockResolvedValue("");
   vi.mocked(api.readPageSettings).mockResolvedValue({ values: {}, locked: [] });
@@ -67,6 +87,11 @@ const menuItems = {
   "Edit › Undo": "undo",
   "Edit › Redo": "redo",
   "Edit › Show Suggestions": "show-suggestions",
+  "Marginalia › Settings…": "open-settings",
+  "File › Go to File…": "go-to-file",
+  "View › Command Palette…": "command-palette",
+  "View › Graph View": "graph-view",
+  "View › Close Pane": "close-pane",
 } as const satisfies Record<string, api.MenuAction>;
 
 /** Simulates the user choosing an item in the native app menu. */
@@ -75,6 +100,14 @@ export async function chooseInMenu(item: keyof typeof menuItems) {
     if (menuHandlers.length === 0) throw new Error("App is not listening to the menu");
   });
   await act(async () => menuHandlers.forEach((handler) => handler(menuItems[item])));
+}
+
+/** Simulates files changing in the workspace's folder outside the app (the backend watches it). */
+export async function filesChangedOnDisk() {
+  await vi.waitFor(() => {
+    if (fileHandlers.length === 0) throw new Error("App is not watching the files");
+  });
+  await act(async () => fileHandlers.forEach((handler) => handler()));
 }
 
 /** Builders for fake workspace contents. */

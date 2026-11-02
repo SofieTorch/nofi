@@ -45,6 +45,23 @@ pub fn create_note(workspace: &Path, format: NoteFormat) -> io::Result<String> {
     unreachable!("there is always a free number")
 }
 
+/// Creates an empty note at a path (relative to the workspace), with the folders it needs: what a
+/// link to a note that doesn't exist yet points to. A note there by then is left as it is.
+pub fn create_note_at(workspace: &Path, note: &str) -> Result<String, NoteError> {
+    let path = inside(workspace, note).ok_or(NoteError::NotFound)?;
+    if !ALL_FORMATS.iter().any(|f| note.ends_with(&format!(".{}", f.extension()))) {
+        return Err(NoteError::Io(format!("\"{}\" isn't a note (.typ or .md).", file_name(note))));
+    }
+    if let Some(folder) = path.parent() {
+        fs::create_dir_all(folder)?;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(_) => Ok(note.to_string()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists && path.is_file() => Ok(note.to_string()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum RenameError {
     Empty,
@@ -210,6 +227,20 @@ pub fn remove_empty_note(workspace: &Path, note: &str) -> Result<(), NoteError> 
         return Err(NoteError::NotEmpty(file_name(note)));
     }
     Ok(fs::remove_file(path)?)
+}
+
+/// Deletes a file (any kind, not a folder) by handing it to `remove`: the app sends it to the
+/// system's Trash. Never touches anything outside the workspace.
+pub fn delete_file_with(
+    workspace: &Path,
+    file: &str,
+    remove: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<(), NoteError> {
+    let path = inside(workspace, file).ok_or(NoteError::NotFound)?;
+    if !path.is_file() {
+        return Err(NoteError::NotFound);
+    }
+    Ok(remove(&path)?)
 }
 
 /// Redoes creating a note: brings it back, empty, at the same place. Never overwrites anything.

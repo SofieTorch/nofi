@@ -45,11 +45,21 @@ export type MenuAction =
   | "toggle-pages"
   | "undo"
   | "redo"
-  | "show-suggestions";
+  | "show-suggestions"
+  | "open-settings"
+  | "go-to-file"
+  | "command-palette"
+  | "graph-view"
+  | "close-pane";
 
 /** Calls `handler` whenever the user chooses one of the app's items in the native menu. */
 export function onMenuAction(handler: (action: MenuAction) => void): Promise<UnlistenFn> {
   return listen<MenuAction>("menu", (event) => handler(event.payload));
+}
+
+/** Calls `handler` whenever files come and go in the open workspace's folder (in any app). */
+export function onFilesChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("files-changed", () => handler());
 }
 
 export type FileEntry = {
@@ -129,7 +139,9 @@ export function saveShowPages(show: boolean): Promise<void> {
 export type PagePicture = { svg: string; width: number; height: number };
 
 /** Draws a Typst note as pages. Rejects with its first mistake, e.g. "Line 2: Unknown variable: x." */
-export function renderPages(note: string): Promise<PagePicture[]> {
+export function renderPages(note: string, path?: string): Promise<PagePicture[]> {
+  // (With the note's path, it can use the workspace's files, like images.)
+  if (path !== undefined) return invoke("render_pages", { note, path });
   return invoke("render_pages", { note });
 }
 
@@ -149,6 +161,76 @@ export function removeEmptyNote(path: string): Promise<void> {
 /** Redoes creating a note: brings it back, empty, at the same place. Never overwrites a note. */
 export function restoreEmptyNote(path: string): Promise<void> {
   return invoke("restore_empty_note", { path });
+}
+
+/** Creates an empty note at a path (for a link to a note that doesn't exist yet); returns its path. */
+export function createNoteAt(path: string): Promise<string> {
+  return invoke("create_note_at", { path });
+}
+
+/** Deletes a file (any kind, not a folder) by sending it to the system's Trash. */
+export function deleteFile(path: string): Promise<void> {
+  return invoke("delete_file", { path });
+}
+
+/** A line of a note with the text that was looked for. */
+export type TextMatch = {
+  path: string;
+  /** From 1. */
+  line: number;
+  /** Where the match starts in its line, and how long it is (counted like the editor). */
+  column: number;
+  length: number;
+  /** The line to show (shortened around the match if long), and where the match is in it. */
+  preview: string;
+  previewColumn: number;
+};
+
+/** The lines of the workspace's notes with some text in them (ignoring case). */
+export function searchNotes(query: string): Promise<TextMatch[]> {
+  return invoke("search_notes", { query });
+}
+
+/** Saves an image (pasted or dropped) in the workspace's `assets` folder; returns its path there. */
+export function saveAsset(name: string, bytes: Uint8Array): Promise<string> {
+  return invoke("save_asset", bytes, { headers: { name: encodeURIComponent(name) } });
+}
+
+/** A file in the workspace, as bytes (for images in the editor, and the PDF reader). */
+export function readWorkspaceFile(path: string): Promise<ArrayBuffer> {
+  return invoke("read_workspace_file", { path });
+}
+
+/** Opens a website (or email address) from a link, in the browser (or mail app). */
+export function openUrl(url: string): Promise<void> {
+  return invoke("open_url", { url });
+}
+
+/** Opens a workspace file from a link in its own app (for files the app doesn't show itself). */
+export function openFile(path: string): Promise<void> {
+  return invoke("open_file", { path });
+}
+
+/** A link from one note to another (which may not exist yet). */
+export type NoteLink = { from: string; to: string };
+
+/** The links between the workspace's notes, for the graph view. */
+export function noteLinks(): Promise<NoteLink[]> {
+  return invoke("note_links");
+}
+
+/** How the editor behaves, in every workspace. */
+export type EditorSettings = {
+  /** Whether blocks show a handle in the margin to drag them around. */
+  blockHandles: boolean;
+};
+
+export function getEditorSettings(): Promise<EditorSettings> {
+  return invoke("get_editor_settings");
+}
+
+export function saveEditorSettings(editor: EditorSettings): Promise<void> {
+  return invoke("save_editor_settings", { editor });
 }
 
 /** A property's value; its type comes from how it's written in the note. */
@@ -287,7 +369,9 @@ export type Problem = {
 };
 
 /** The mistakes in a Typst note (empty if there are none). */
-export function checkNote(note: string): Promise<Problem[]> {
+export function checkNote(note: string, path?: string): Promise<Problem[]> {
+  // (With the note's path, it can use the workspace's files, like images.)
+  if (path !== undefined) return invoke("check_note", { note, path });
   return invoke("check_note", { note });
 }
 

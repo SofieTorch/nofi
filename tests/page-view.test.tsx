@@ -52,7 +52,7 @@ describe("The page view", () => {
     await userEvent.click(showPagesButton());
 
     expect(await findPages()).toHaveLength(1);
-    expect(api.renderPages).toHaveBeenCalledWith("= Attention\nA study.");
+    expect(api.renderPages).toHaveBeenCalledWith("= Attention\nA study.", expect.any(String));
     expect(editor).toBeInTheDocument();
     expect(showPagesButton()).toHaveAttribute("aria-pressed", "true");
   });
@@ -111,7 +111,7 @@ describe("The page view", () => {
     await userEvent.keyboard("New ");
 
     await vi.waitFor(() =>
-      expect(api.renderPages).toHaveBeenLastCalledWith(expect.stringContaining("New ")),
+      expect(api.renderPages).toHaveBeenLastCalledWith(expect.stringContaining("New "), expect.any(String)),
     );
   });
 

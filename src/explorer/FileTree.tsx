@@ -13,6 +13,7 @@ import { Icon } from "@mdi/react";
 import { useEffect, useRef, useState } from "react";
 import type { FileEntry } from "../api";
 import { noteFormat } from "../editor/formatting";
+import { startDraggingNote, stopDragging } from "../workspace/Panes";
 
 /** A note whose name is being typed, e.g. right after it was created. */
 export type Renaming = {
@@ -27,30 +28,33 @@ type Props = {
   /** A file to highlight, e.g. the note that was just created. */
   highlightedPath?: string;
   renaming?: Renaming;
-  /** Opens a note (only notes can be opened, not e.g. PDFs). */
+  /** Opens a note, or a PDF in the reader (other files can't be opened). */
   onOpen?: (path: string) => void;
   /** Notes known to have mistakes: they get a red dot. */
   withMistakes?: ReadonlySet<string>;
+  /** Double-clicking a file's name: to type a new one. */
+  onStartRenaming?: (path: string) => void;
+  /** Right-clicking a file: its menu, at the mouse. */
+  onFileMenu?: (path: string, at: { x: number; y: number }) => void;
   depth?: number;
 };
 
-export function FileTree({ entries, highlightedPath, renaming, onOpen, withMistakes, depth = 0 }: Props) {
+export function FileTree(props: Props) {
+  const { entries, highlightedPath, renaming, onOpen, withMistakes, onStartRenaming, onFileMenu, depth = 0 } = props;
   return (
     <ul className="flex flex-col">
       {entries.map((entry) =>
         entry.kind === "folder" ? (
-          <FolderItem
-            key={entry.path}
-            folder={entry}
-            highlightedPath={highlightedPath}
-            renaming={renaming}
-            onOpen={onOpen}
-            withMistakes={withMistakes}
-            depth={depth}
-          />
+          <FolderItem key={entry.path} folder={entry} {...props} depth={depth} />
         ) : (
           <li
             key={entry.path}
+            onDoubleClick={() => renaming?.path !== entry.path && onStartRenaming?.(entry.path)}
+            onContextMenu={(event) => {
+              if (!onFileMenu) return;
+              event.preventDefault();
+              onFileMenu(entry.path, { x: event.clientX, y: event.clientY });
+            }}
             aria-current={entry.path === highlightedPath ? "true" : undefined}
             className={`relative rounded-md ${entry.path === highlightedPath ? "bg-neutral-100" : ""}`}
           >
@@ -59,9 +63,17 @@ export function FileTree({ entries, highlightedPath, renaming, onOpen, withMista
                 <FileLabel name={entry.name} />
                 <NameField fileName={entry.name} renaming={renaming} />
               </div>
-            ) : noteFormat(entry.path) && onOpen ? (
+            ) : (noteFormat(entry.path) || entry.path.toLowerCase().endsWith(".pdf")) && onOpen ? (
               <button
                 onClick={() => onOpen(entry.path)}
+                draggable
+                onDragStart={(event) => {
+                  // Dropped on a pane, the note opens there; at a pane's edge, beside it.
+                  startDraggingNote(entry.path);
+                  event.dataTransfer?.setData("text/plain", entry.path);
+                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={stopDragging}
                 aria-description={withMistakes?.has(entry.path) ? "Has mistakes" : undefined}
                 className={`${row} w-full text-left hover:bg-neutral-100`}
                 style={{ paddingLeft: indent(depth) }}
@@ -95,21 +107,7 @@ function FileLabel({ name }: { name: string }) {
   );
 }
 
-function FolderItem({
-  folder,
-  highlightedPath,
-  renaming,
-  onOpen,
-  withMistakes,
-  depth,
-}: {
-  folder: FileEntry;
-  highlightedPath?: string;
-  renaming?: Renaming;
-  onOpen?: (path: string) => void;
-  withMistakes?: ReadonlySet<string>;
-  depth: number;
-}) {
+function FolderItem({ folder, depth, ...props }: Props & { folder: FileEntry; depth: number }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <li>
@@ -132,14 +130,7 @@ function FolderItem({
         <span className="truncate">{folder.name}</span>
       </button>
       {expanded && (
-        <FileTree
-          entries={folder.children}
-          highlightedPath={highlightedPath}
-          renaming={renaming}
-          onOpen={onOpen}
-          withMistakes={withMistakes}
-          depth={depth + 1}
-        />
+        <FileTree {...props} entries={folder.children} depth={depth + 1} />
       )}
     </li>
   );
@@ -181,7 +172,7 @@ function NameField({ fileName, renaming }: { fileName: string; renaming: Renamin
       <span className="flex min-w-0 flex-1 items-center">
         <input
           ref={input}
-          aria-label="Note name"
+          aria-label={noteFormat(fileName) ? "Note name" : "File name"}
           aria-invalid={error ? true : undefined}
           value={value}
           spellCheck={false}

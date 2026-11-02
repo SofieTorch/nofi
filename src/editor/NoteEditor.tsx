@@ -4,6 +4,8 @@ import { EditorView, keymap } from "@codemirror/view";
 import { type RefObject, useEffect, useRef } from "react";
 import type { Format } from "./formatting";
 import { editorFeatures } from "./features";
+import { headingFoldsField } from "./headingFolds";
+import { notePath, registerNoteEditor } from "./noteLinks";
 import { recallNoteState, rememberNoteState } from "./noteHistory";
 import { typstProblems } from "./typstProblems";
 import type { Problem } from "../api";
@@ -43,10 +45,12 @@ export function NoteEditor({
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.contentAttributes.of({ "aria-label": name, spellcheck: "true" }),
+      notePath.of(historyKey),
       editorFeatures(format),
       format === "typst" ? typstProblems((problems) => onProblemsRef.current?.(problems)) : [],
       EditorView.updateListener.of((update) => {
-        if (update.docChanged || update.selectionSet) rememberNoteState(historyKey, update.state);
+        // (Any change: the text, the cursor, or a heading collapsed.)
+        if (update.transactions.length) rememberNoteState(historyKey, update.state);
         if (update.docChanged) onChangeRef.current(update.state.doc.toString());
       }),
     ];
@@ -54,14 +58,16 @@ export function NoteEditor({
     const saved = recallNoteState(historyKey, initialText);
     const state = saved
       ? EditorState.fromJSON(
-          saved.toJSON({ history: historyField }),
+          saved.toJSON({ history: historyField, folds: headingFoldsField }),
           { extensions },
-          { history: historyField },
+          { history: historyField, folds: headingFoldsField },
         )
       : EditorState.create({ doc: initialText, extensions });
     const view = new EditorView({ parent: parent.current!, state });
     if (viewRef) viewRef.current = view;
+    const unregister = registerNoteEditor(historyKey, view);
     return () => {
+      unregister();
       if (viewRef) viewRef.current = null;
       view.destroy();
     };

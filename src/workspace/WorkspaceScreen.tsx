@@ -1,17 +1,28 @@
 import { startCompletion } from "@codemirror/autocomplete";
 import { redo, undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api";
-import type { ExplorerLayout, FileEntry, NoteFormat, Workspace } from "../api";
+import type { EditorSettings, ExplorerLayout, FileEntry, NoteFormat, Workspace } from "../api";
 import { createAutosave } from "../editor/autosave";
 import { forgetNoteHistory, moveNoteHistory } from "../editor/noteHistory";
 import { NotePane } from "../editor/NotePane";
+import { showBlockHandles } from "../editor/blockHandles";
+import { type LinkTarget, setLinkCopiedReporter, setNoteLinkOpener, setWorkspaceNotes } from "../editor/noteLinks";
+import { noteFormat } from "../editor/formatting";
+import { setImageProblemReporter } from "../editor/images";
+import { type Command, CommandPalette } from "./CommandPalette";
+import { ConfirmDelete } from "./ConfirmDelete";
+import { SettingsDialog } from "./SettingsDialog";
 import { FileExplorer } from "../explorer/FileExplorer";
 import { isMac } from "../ui/platform";
 import { UNDO_IN_FIELD } from "../editor/TableGrid";
 import { SHOW_SUGGESTIONS } from "../ui/SuggestingInput";
 import { FileHistory } from "./fileHistory";
+import { GraphView } from "./GraphView";
+import { activeFile, activePath, closeGroup, closeTab, emptyLayout, findTab, groups, placeTab, tabFor, type Layout, openTab, removePath, renamePath, split } from "./layout";
+import { Panes } from "./Panes";
+import { PdfView } from "./PdfView";
 import { TopBar } from "./TopBar";
 
 const SAVE_PROBLEM = "Couldn't save the note:";
@@ -30,11 +41,29 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   const showPagesRef = useRef(false);
   const [files, setFiles] = useState<FileEntry[] | null>(null);
   const [filesError, setFilesError] = useState<string>();
-  /** The note shown in the editor (and highlighted in the explorer). */
-  const [openPath, setOpenPath] = useState<string>();
+  /** The panes and their tabs; the active pane's note is highlighted in the explorer. */
+  const [panes, setPanes] = useState<Layout>(emptyLayout);
+  const openPath = activePath(panes);
+  // The note last shown, even while the graph's pane is the active one.
+  const lastNoteRef = useRef<string>(undefined);
+  if (openPath) lastNoteRef.current = openPath;
+  const lastNote = lastNoteRef.current;
+  /** Opens a note (or a PDF, in the reader) in the active pane, or shows it where it's open already. */
+  const openNote = (path: string) => setPanes((current) => openTab(current, tabFor(path)));
+  const closeNote = (path: string) => setPanes((current) => removePath(current, path));
   // A new note's name is ready to type over until it's saved or kept.
   const [renamingPath, setRenamingPath] = useState<string>();
   const [problem, setProblem] = useState<string>();
+  const [editorSettings, setEditorSettings] = useState<EditorSettings>({ blockHandles: true });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The palette, when open: what was typed at first ("" for notes, ">" for commands). */
+  const [palette, setPalette] = useState<string>();
+  /** A match to select in a note, once it's open (a new object each time, to select it again). */
+  const [reveal, setReveal] = useState<api.TextMatch>();
+  /** A part of a file to go to, once it's open (from a link; a new object each time). */
+  const [goTo, setGoTo] = useState<{ path: string; part: string }>();
+  /** A file the user asked to delete, waiting for them to confirm. */
+  const [deleting, setDeleting] = useState<string>();
   /** Notes found to have mistakes (only notes opened in this session are known). */
   const [withMistakes, setWithMistakes] = useState<ReadonlySet<string>>(new Set());
   function noteMistakes(path: string, hasMistakes: boolean) {
@@ -46,13 +75,26 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       return next;
     });
   }
+  /** Counts saves, for the graph to look at the links again. */
+  const [saves, setSaves] = useState(0);
   const [autosave] = useState(() =>
     createAutosave({
-      onSaved: () => setProblem((p) => (p?.startsWith(SAVE_PROBLEM) ? undefined : p)),
+      onSaved: () => {
+        setProblem((p) => (p?.startsWith(SAVE_PROBLEM) ? undefined : p));
+        setSaves((count) => count + 1);
+      },
       onFailed: (reason) => setProblem(`${SAVE_PROBLEM} ${reason}`),
     }),
   );
   useEffect(() => () => autosave.dispose(), [autosave]);
+  // What was just typed is saved first, so it's found too.
+  const searchText = useCallback(
+    async (query: string) => {
+      await autosave.flush();
+      return api.searchNotes(query);
+    },
+    [autosave],
+  );
   const [fileHistory] = useState(() => new FileHistory());
   /** A short message about what Undo or Redo just did. */
   const [notice, setNotice] = useState<string>();
@@ -76,13 +118,34 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
 
   useEffect(() => {
     loadFiles();
+    // Files made, renamed or deleted outside the app show up (or go) by themselves.
+    const unlisten = api.onFilesChanged(() => loadFiles());
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
+
+  // Notes for the editor's [[ list, and what clicking a link to a note does.
+  const filesRef = useRef<FileEntry[]>([]);
+  useEffect(() => {
+    filesRef.current = files ?? [];
+    setWorkspaceNotes(files ?? []);
+  }, [files]);
+  useEffect(() => {
+    setNoteLinkOpener(followLink);
+    setLinkCopiedReporter(setNotice);
+    setImageProblemReporter(setProblem);
+    return () => {
+      setNoteLinkOpener(null);
+      setLinkCopiedReporter(null);
+    };
   }, []);
 
   async function newNote(format?: NoteFormat) {
     try {
       const path = format ? await api.createNote(format) : await api.createNote();
       setProblem(undefined);
-      setOpenPath(path);
+      openNote(path);
       setRenamingPath(path);
       await loadFiles();
       fileHistory.record({
@@ -92,13 +155,13 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
           await api.removeEmptyNote(path);
           forgetNoteHistory(path);
           setRenamingPath(undefined);
-          setOpenPath((open) => (open === path ? undefined : open));
+          closeNote(path);
           await loadFiles();
         },
         redo: async () => {
           await api.restoreEmptyNote(path);
           await loadFiles();
-          setOpenPath(path);
+          openNote(path);
         },
       });
     } catch (error) {
@@ -113,19 +176,98 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     const newPath = await api.renameNote(path, newName);
     moveNoteHistory(path, newPath);
     await loadFiles();
-    setOpenPath((open) => (open === path ? newPath : open));
+    setPanes((current) => renamePath(current, path, newPath));
     return newPath;
   }
 
   async function renameNote(path: string, newName: string) {
     const newPath = await renameFile(path, newName);
-    setOpenPath(newPath);
     setRenamingPath(undefined);
     fileHistory.record({
       description: `renaming "${fileName(path)}" to "${fileName(newPath)}"`,
       undo: () => renameFile(newPath, nameOf(path)).then(() => {}),
       redo: () => renameFile(path, nameOf(newPath)).then(() => {}),
     });
+  }
+
+  /** Makes sure a note exists, creating it if a link points to it but it isn't created yet. */
+  async function ensureNote(path: string) {
+    const exists = (entries: FileEntry[]): boolean =>
+      entries.some((entry) => entry.path === path || (entry.kind === "folder" && exists(entry.children)));
+    if (exists(filesRef.current)) return true;
+    try {
+      await api.createNoteAt(path);
+      await loadFiles();
+      return true;
+    } catch (reason) {
+      setProblem(`Couldn't create “${fileName(path)}”: ${reason}`);
+      return false;
+    }
+  }
+
+  /**
+   * Follows a link: a note opens (created first if it doesn't exist yet, like in Obsidian), and so
+   * does a PDF, in the reader; other files open in their own app, websites in the browser. With
+   * ⌘ (`newPane`), the note or PDF opens in a new pane beside the one the link is in.
+   */
+  async function followLink(target: LinkTarget, newPane: boolean) {
+    try {
+      if ("url" in target) return await api.openUrl(target.url);
+      const { path } = target;
+      const exists = (entries: FileEntry[]): boolean =>
+        entries.some((entry) => entry.path === path || (entry.kind === "folder" && exists(entry.children)));
+      const inApp = noteFormat(path) || path.toLowerCase().endsWith(".pdf");
+      if (!inApp) return await api.openFile(path);
+      if (noteFormat(path)) {
+        if (!(await ensureNote(path))) return;
+      } else if (!exists(filesRef.current)) {
+        return setProblem(`“${fileName(path)}” isn't in the workspace.`);
+      }
+      if (newPane) setPanes((current) => placeTab(current, tabFor(path), { group: current.active, side: "right" }));
+      else openNote(path);
+      if (target.part) setGoTo({ path, part: target.part });
+    } catch (reason) {
+      setProblem(`Couldn't open the link: ${reason}`);
+    }
+  }
+
+  /** The graph view, as a tab in the active pane (or shown where it's open already). */
+  const openGraph = () => setPanes((current) => openTab(current, { kind: "graph" }));
+
+  /** A note chosen in the graph opens beside it, in another pane if there's one, so the graph stays. */
+  async function openFromGraph(path: string, graphPane: string) {
+    if (!(await ensureNote(path))) return;
+    setPanes((current) => {
+      const tab = { kind: "note", path } as const;
+      if (findTab(current, tab)) return openTab(current, tab);
+      const other = groups(current).find((group) => group.id !== graphPane);
+      return other ? openTab(current, tab, other.id) : split(current, graphPane, "right", tab);
+    });
+  }
+
+  const closeActivePane = () => setPanes((current) => closeGroup(current, current.active));
+
+  function closeActiveTab() {
+    setPanes((current) => {
+      const group = groups(current).find((g) => g.id === current.active);
+      return group && group.tabs.length ? closeTab(current, group.id, group.active) : current;
+    });
+  }
+
+  /** Deletes a file (after the user confirmed): it goes to the system's Trash. */
+  async function deleteFile(path: string) {
+    setDeleting(undefined);
+    try {
+      // What was typed is saved first, so the Trash has the note as it was.
+      await autosave.flush();
+      await api.deleteFile(path);
+      forgetNoteHistory(path);
+      closeNote(path);
+      setProblem(undefined);
+    } catch (reason) {
+      setProblem(`Couldn't delete “${fileName(path)}”: ${reason}`);
+    }
+    await loadFiles();
   }
 
   /** Edit › Show Suggestions: opens suggestions wherever the cursor is (a note, or a property). */
@@ -215,6 +357,20 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     api.saveExplorerLayout(next).catch(console.error);
   }
 
+  function applyEditorSettings(settings: EditorSettings) {
+    setEditorSettings(settings);
+    showBlockHandles(settings.blockHandles);
+  }
+
+  useEffect(() => {
+    api.getEditorSettings().then(applyEditorSettings, () => applyEditorSettings({ blockHandles: true }));
+  }, []);
+
+  function changeEditorSettings(settings: EditorSettings) {
+    applyEditorSettings(settings);
+    api.saveEditorSettings(settings).catch((reason) => setProblem(`Couldn't save the settings: ${reason}`));
+  }
+
   useEffect(() => {
     api.getShowPages().then(
       (show) => {
@@ -246,6 +402,11 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       if (action === "toggle-pages") toggleShowPages();
       if (action === "undo" || action === "redo") undoOrRedo(action);
       if (action === "show-suggestions") showSuggestions();
+      if (action === "open-settings") setSettingsOpen(true);
+      if (action === "go-to-file") setPalette("");
+      if (action === "command-palette") setPalette(">");
+      if (action === "graph-view") openGraph();
+      if (action === "close-pane") closeActivePane();
     });
     return () => {
       unlisten.then((stopListening) => stopListening());
@@ -259,9 +420,9 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     layout,
     files,
     error: filesError,
-    highlightedPath: openPath,
+    highlightedPath: activeFile(panes),
     withMistakes,
-    onOpen: setOpenPath,
+    onOpen: openNote,
     renaming: renamingPath
       ? {
           path: renamingPath,
@@ -271,7 +432,26 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       : undefined,
     onTogglePinned: togglePinned,
     onNewNote: () => newNote(),
+    onStartRenaming: setRenamingPath,
+    onDelete: setDeleting,
   };
+
+  // What the command palette (⌘⇧P) can do, named like the menus.
+  const commands: Command[] = [
+    { label: "Settings: Open Settings", run: () => setSettingsOpen(true) },
+    {
+      label: `Settings: Turn ${editorSettings.blockHandles ? "Off" : "On"} Block Handles`,
+      run: () => changeEditorSettings({ ...editorSettings, blockHandles: !editorSettings.blockHandles }),
+    },
+    { label: "File: New Note", run: () => newNote() },
+    { label: "File: New Markdown Note", run: () => newNote("markdown") },
+    { label: `View: ${showPages ? "Hide" : "Show"} Pages`, run: toggleShowPages },
+    { label: `View: ${layout.mode === "pinned" ? "Unpin" : "Pin"} File Explorer`, run: togglePinned },
+    { label: "View: Move File Explorer to Other Side", run: moveToOtherSide },
+    { label: "View: Open Graph View", run: openGraph },
+    { label: "View: Close Tab", run: closeActiveTab },
+    { label: "View: Close Pane", run: closeActivePane },
+  ];
 
   return (
     <div className="flex h-screen flex-col bg-white">
@@ -301,19 +481,40 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
           </div>
         )}
         <main className="relative min-w-0 flex-1 overflow-hidden">
-          {openPath ? (
-            <NotePane
-              key={openPath}
-              path={openPath}
-              autosave={autosave}
-              showPages={showPages}
-              onMistakes={noteMistakes}
-            />
-          ) : (
-            <p className="flex h-full items-center justify-center text-sm text-neutral-400">
-              Open a note from the explorer, or create one with {isMac ? "⌘N" : "Ctrl+N"}.
-            </p>
-          )}
+          <Panes
+            layout={panes}
+            onChange={setPanes}
+            label={(tab) => (tab.kind === "graph" ? "Graph" : tab.kind === "pdf" ? fileName(tab.path) : nameOf(tab.path))}
+            title={(tab) => (tab.kind === "graph" ? "Graph" : tab.path)}
+            content={(tab, group) =>
+              tab.kind === "pdf" ? (
+                <PdfView key={tab.path} path={tab.path} goTo={goTo?.path === tab.path ? goTo : undefined} />
+              ) : tab.kind === "graph" ? (
+                <GraphView
+                  files={files ?? []}
+                  activePath={lastNote}
+                  version={saves}
+                  onOpen={(path) => openFromGraph(path, group.id)}
+                />
+              ) : (
+                <NotePane
+                  key={tab.path}
+                  path={tab.path}
+                  autosave={autosave}
+                  showPages={showPages}
+                  reveal={reveal?.path === tab.path ? reveal : undefined}
+                  goTo={goTo?.path === tab.path ? goTo : undefined}
+                  onMissingPart={(path, part) => setProblem(`Couldn't find “${part}” in ${fileName(path)}.`)}
+                  onMistakes={noteMistakes}
+                />
+              )
+            }
+            empty={
+              <p className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-400">
+                Open a note from the explorer, or create one with {isMac ? "⌘N" : "Ctrl+N"}.
+              </p>
+            }
+          />
           {notice && !problem && (
             <p
               role="status"
@@ -332,6 +533,26 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
           )}
         </main>
       </div>
+      {palette !== undefined && (
+        <CommandPalette
+          initial={palette}
+          files={files ?? []}
+          commands={commands}
+          onOpenFile={openNote}
+          searchText={searchText}
+          onOpenMatch={(match) => {
+            openNote(match.path);
+            setReveal({ ...match });
+          }}
+          onClose={() => setPalette(undefined)}
+        />
+      )}
+      {deleting && (
+        <ConfirmDelete name={fileName(deleting)} onDelete={() => deleteFile(deleting)} onCancel={() => setDeleting(undefined)} />
+      )}
+      {settingsOpen && (
+        <SettingsDialog settings={editorSettings} onChange={changeEditorSettings} onClose={() => setSettingsOpen(false)} />
+      )}
     </div>
   );
 }

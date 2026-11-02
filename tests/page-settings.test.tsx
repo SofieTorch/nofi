@@ -81,7 +81,7 @@ describe("Page settings", () => {
     expect(api.changePageSetting).toHaveBeenCalledWith(NOTE, { setting: "columns", value: 2 });
     await vi.waitFor(() => expect(textIn(editor)).toBe(changed));
     await vi.waitFor(() => expect(api.saveNote).toHaveBeenCalledWith("Paper.typ", changed));
-    await vi.waitFor(() => expect(api.renderPages).toHaveBeenLastCalledWith(changed));
+    await vi.waitFor(() => expect(api.renderPages).toHaveBeenLastCalledWith(changed, expect.any(String)));
   });
 
   it("going back to one column removes the setting (Typst's default)", async () => {

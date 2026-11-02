@@ -8,3 +8,22 @@ afterEach(() => cleanup());
 const emptyRect = { x: 0, y: 0, top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0, toJSON() {} };
 Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
 Range.prototype.getBoundingClientRect = () => emptyRect as DOMRect;
+
+// jsdom has no pointer or drag events: stand-ins that keep the mouse's position (clientX/Y).
+if (!("PointerEvent" in window)) {
+  class PointerEvent extends MouseEvent {}
+  Object.assign(window, { PointerEvent });
+}
+if (!("DragEvent" in window)) {
+  class DragEvent extends MouseEvent {
+    dataTransfer = null;
+  }
+  Object.assign(window, { DragEvent });
+}
+
+// jsdom can't make URLs for files (pictures shown in notes).
+if (!URL.createObjectURL) {
+  let made = 0;
+  URL.createObjectURL = () => `blob:test/${++made}`;
+  URL.revokeObjectURL = () => {};
+}

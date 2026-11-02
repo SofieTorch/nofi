@@ -23,7 +23,16 @@ pub struct Pages {
 
 /// Draws a note as pages, or explains its first mistake (with the line it's on).
 pub fn render_pages(note: &str) -> Result<Pages, String> {
-    let world = NoteWorld::new(note.to_string());
+    draw(NoteWorld::new(note.to_string()))
+}
+
+/// Like `render_pages`, for a note in a workspace (path relative to its folder): it can use the
+/// workspace's files, like images.
+pub fn render_pages_at(note: &str, workspace: &std::path::Path, path: &str) -> Result<Pages, String> {
+    draw(NoteWorld::at(note.to_string(), workspace, path))
+}
+
+fn draw(world: NoteWorld) -> Result<Pages, String> {
     let document = typst::compile::<PagedDocument>(&world).output.map_err(|errors| {
         let Some(error) = errors.first() else {
             return "Typst couldn't draw this note.".to_string();

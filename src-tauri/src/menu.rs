@@ -13,8 +13,13 @@ const TOGGLE_PAGES: &str = "toggle-pages";
 const UNDO: &str = "undo";
 const REDO: &str = "redo";
 const SHOW_SUGGESTIONS: &str = "show-suggestions";
+const OPEN_SETTINGS: &str = "open-settings";
+const GO_TO_FILE: &str = "go-to-file";
+const COMMAND_PALETTE: &str = "command-palette";
+const GRAPH_VIEW: &str = "graph-view";
+const CLOSE_PANE: &str = "close-pane";
 
-const ACTIONS: [&str; 9] = [
+const ACTIONS: [&str; 14] = [
     NEW_NOTE,
     NEW_MARKDOWN_NOTE,
     CLOSE_WORKSPACE,
@@ -24,6 +29,11 @@ const ACTIONS: [&str; 9] = [
     UNDO,
     REDO,
     SHOW_SUGGESTIONS,
+    OPEN_SETTINGS,
+    GO_TO_FILE,
+    COMMAND_PALETTE,
+    GRAPH_VIEW,
+    CLOSE_PANE,
 ];
 
 /// Items that only make sense while a workspace is open.
@@ -34,6 +44,10 @@ struct WorkspaceItems {
     pin_explorer: CheckMenuItem<Wry>,
     move_explorer: MenuItem<Wry>,
     show_pages: CheckMenuItem<Wry>,
+    go_to_file: MenuItem<Wry>,
+    command_palette: MenuItem<Wry>,
+    graph_view: MenuItem<Wry>,
+    close_pane: MenuItem<Wry>,
 }
 
 /// Starts from the default menu so the standard Edit menu (and copy/paste shortcuts) keep working.
@@ -49,6 +63,16 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             None::<&str>,
         )?,
         close: MenuItem::with_id(app, CLOSE_WORKSPACE, "Close Workspace", false, None::<&str>)?,
+        go_to_file: MenuItem::with_id(app, GO_TO_FILE, "Go to File…", false, Some("CmdOrCtrl+P"))?,
+        command_palette: MenuItem::with_id(
+            app,
+            COMMAND_PALETTE,
+            "Command Palette…",
+            false,
+            Some("CmdOrCtrl+Shift+P"),
+        )?,
+        graph_view: MenuItem::with_id(app, GRAPH_VIEW, "Graph View", false, Some("CmdOrCtrl+Shift+G"))?,
+        close_pane: MenuItem::with_id(app, CLOSE_PANE, "Close Pane", false, None::<&str>)?,
         pin_explorer: CheckMenuItem::with_id(
             app,
             TOGGLE_EXPLORER_PINNED,
@@ -77,9 +101,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let file = find_or_add_submenu(app, &menu, "File", None)?;
     file.insert(&items.new_note, 0)?;
     file.insert(&items.new_markdown_note, 1)?;
-    file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
-    file.insert(&items.close, 3)?;
-    file.insert(&PredefinedMenuItem::separator(app)?, 4)?;
+    file.insert(&items.go_to_file, 2)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 3)?;
+    file.insert(&items.close, 4)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 5)?;
 
     // The app decides what Undo means: typing in the editor, or the last file action elsewhere.
     let edit = find_or_add_submenu(app, &menu, "Edit", Some("File"))?;
@@ -99,11 +124,27 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     edit.append(&suggestions)?;
 
     let view = find_or_add_submenu(app, &menu, "View", Some("Edit"))?;
-    view.insert(&items.pin_explorer, 0)?;
-    view.insert(&items.move_explorer, 1)?;
-    view.insert(&PredefinedMenuItem::separator(app)?, 2)?;
-    view.insert(&items.show_pages, 3)?;
+    view.insert(&items.command_palette, 0)?;
+    view.insert(&PredefinedMenuItem::separator(app)?, 1)?;
+    view.insert(&items.pin_explorer, 2)?;
+    view.insert(&items.move_explorer, 3)?;
     view.insert(&PredefinedMenuItem::separator(app)?, 4)?;
+    view.insert(&items.show_pages, 5)?;
+    view.insert(&items.graph_view, 6)?;
+    view.insert(&PredefinedMenuItem::separator(app)?, 7)?;
+    view.insert(&items.close_pane, 8)?;
+    view.insert(&PredefinedMenuItem::separator(app)?, 9)?;
+
+    // Settings: in the app's own menu on a Mac (like every Mac app), in File elsewhere.
+    let settings = MenuItem::with_id(app, OPEN_SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let app_menu = menu.items()?.first().and_then(|item| item.as_submenu().cloned());
+    match app_menu {
+        Some(app_menu) if cfg!(target_os = "macos") => {
+            app_menu.insert(&settings, 1)?;
+            app_menu.insert(&PredefinedMenuItem::separator(app)?, 1)?;
+        }
+        _ => file.insert(&settings, 6)?,
+    }
 
     app.manage(items);
     Ok(menu)
@@ -146,6 +187,10 @@ pub fn set_workspace_open(app: &AppHandle, open: bool) {
         let _ = items.pin_explorer.set_enabled(open);
         let _ = items.move_explorer.set_enabled(open);
         let _ = items.show_pages.set_enabled(open);
+        let _ = items.go_to_file.set_enabled(open);
+        let _ = items.command_palette.set_enabled(open);
+        let _ = items.graph_view.set_enabled(open);
+        let _ = items.close_pane.set_enabled(open);
     }
 }
 

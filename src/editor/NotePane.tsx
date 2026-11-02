@@ -1,8 +1,9 @@
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api";
 import type { Autosave } from "./autosave";
 import { noteFormat } from "./formatting";
+import { goToPart } from "./noteLinks";
 import { NoteEditor } from "./NoteEditor";
 import { NoPages, PagesPane } from "./PagesPane";
 import { ProblemsButton } from "./ProblemsButton";
@@ -19,10 +20,16 @@ type Props = {
   showPages: boolean;
   /** Called with whether the note has mistakes (errors), each time it's checked. */
   onMistakes?: (path: string, hasMistakes: boolean) => void;
+  /** Text to select (a search match), once the note is shown; selected again for a new object. */
+  reveal?: { line: number; column: number; length: number };
+  /** A part of the note to go to (a link's anchor, after its #); gone to again for a new object. */
+  goTo?: { part: string };
+  /** Called when the part to go to isn't in the note. */
+  onMissingPart?: (path: string, part: string) => void;
 };
 
 /** Loads one note and shows it in the editor. Saves what's waiting when it closes. */
-export function NotePane({ path, autosave, showPages, onMistakes }: Props) {
+export function NotePane({ path, autosave, showPages, onMistakes, reveal, goTo, onMissingPart }: Props) {
   const [problems, setProblems] = useState<api.Problem[]>([]);
   const [state, setState] = useState<State>({ status: "loading" });
   // The text as typed so far, for the pages (the editor itself keeps its own copy).
@@ -45,6 +52,37 @@ export function NotePane({ path, autosave, showPages, onMistakes }: Props) {
       autosave.flush();
     };
   }, [path, autosave]);
+
+  // A search match: selected, in view, with the cursor in the note. (On the next frame: the
+  // editor may have just been made again, as React does while developing.)
+  useEffect(() => {
+    if (!reveal || state.status !== "ready") return;
+    const frame = requestAnimationFrame(() => {
+      const editor = view.current;
+      if (!editor) return;
+      const { doc } = editor.state;
+      const line = doc.line(Math.min(Math.max(reveal.line, 1), doc.lines));
+      const from = Math.min(line.from + reveal.column, line.to);
+      editor.dispatch({
+        selection: { anchor: from, head: Math.min(from + reveal.length, line.to) },
+        effects: EditorView.scrollIntoView(from, { y: "center" }),
+      });
+      editor.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [reveal, state.status]);
+
+  // A link to a part of the note: it's shown, highlighted for a moment.
+  const onMissingRef = useRef(onMissingPart);
+  onMissingRef.current = onMissingPart;
+  useEffect(() => {
+    if (!goTo || state.status !== "ready") return;
+    const frame = requestAnimationFrame(() => {
+      const editor = view.current;
+      if (editor && !goToPart(editor, format, goTo.part)) onMissingRef.current?.(path, goTo.part);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [goTo, state.status, format, path]);
 
   if (state.status === "failed") {
     return (
@@ -110,7 +148,7 @@ export function NotePane({ path, autosave, showPages, onMistakes }: Props) {
       </div>
       {showPages && (
         <div className="h-full min-w-0 flex-1 border-l-[0.5px] border-neutral-200">
-          {format === "typst" ? <PagesPane text={text} onJump={jumpTo} onChangeText={replaceText} /> : <NoPages />}
+          {format === "typst" ? <PagesPane text={text} path={path} onJump={jumpTo} onChangeText={replaceText} /> : <NoPages />}
         </div>
       )}
     </div>

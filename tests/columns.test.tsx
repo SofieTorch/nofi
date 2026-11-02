@@ -279,6 +279,36 @@ describe("Arrow keys and columns", () => {
     expect(head(columnView(1))).toBe(0);
   });
 
+  it("the blank line between the columns and the paragraph after them isn't shown", async () => {
+    notes["Paper.typ"] = `Intro.\n\n${COLUMNS}\n\nAfter.`;
+    const { editor } = await openNote();
+
+    // (The note's own lines, not the columns'.)
+    const lines = [...editor.querySelectorAll(":scope > .cm-line")].map((line) => line.textContent);
+    expect(lines).toEqual(["Intro.", "After."]);
+  });
+
+  it("→ at the end of a paragraph a blank line before the columns goes into the first column", async () => {
+    notes["Paper.typ"] = `Intro.\n\n${COLUMNS}\n\nAfter.`;
+    const { view } = await openNote();
+    cursorInNote(view, "Intro.".length);
+
+    await userEvent.keyboard("{ArrowRight}");
+
+    expect(focusedColumn()).toBe("Column 1");
+    expect(head(columnView(1))).toBe(0);
+  });
+
+  it("← at the start of a paragraph a blank line after the columns goes into the last column", async () => {
+    notes["Paper.typ"] = `Intro.\n\n${COLUMNS}\n\nAfter.`;
+    const { view } = await openNote();
+    cursorInNote(view, notes["Paper.typ"].indexOf("After."));
+
+    await userEvent.keyboard("{ArrowLeft}");
+
+    expect(focusedColumn()).toBe("Column 2");
+  });
+
   it("↓ on the line before the columns goes into the first column", async () => {
     const { view } = await openNote();
     cursorInNote(view, 2);

@@ -7,6 +7,7 @@ import { type Diagnostic, forEachDiagnostic, linter, lintKeymap } from "@codemir
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import * as api from "../api";
+import { notePath } from "./noteLinks";
 
 /** The problem each underline stands for (to show its hints in the problems list). */
 const problemOf = new WeakMap<Diagnostic, api.Problem>();
@@ -43,7 +44,8 @@ export function typstProblems(onProblems: (problems: api.Problem[]) => void) {
   const check = linter(
     async (view): Promise<Diagnostic[]> => {
       const text = view.state.doc.toString();
-      const problems = await api.checkNote(text).catch(() => [] as api.Problem[]);
+      const path = view.state.facet(notePath);
+      const problems = await (path ? api.checkNote(text, path) : api.checkNote(text)).catch(() => [] as api.Problem[]);
       // If the note changed while it was being checked, a newer check is on its way.
       if (view.state.doc.toString() !== text) return [];
       onProblems(problems);

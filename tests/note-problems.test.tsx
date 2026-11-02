@@ -57,7 +57,7 @@ describe("Mistakes in a Typst note", () => {
     await openNote();
 
     expect(await problemsButton()).toBeInTheDocument();
-    expect(api.checkNote).toHaveBeenCalledWith(NOTE);
+    expect(api.checkNote).toHaveBeenCalledWith(NOTE, expect.any(String));
   });
 
   it("are underlined where they are", async () => {
@@ -95,7 +95,7 @@ describe("Mistakes in a Typst note", () => {
 
     await userEvent.keyboard(" Costs $5");
 
-    await vi.waitFor(() => expect(api.checkNote).toHaveBeenLastCalledWith("All good. Costs $5"), { timeout: 2000 });
+    await vi.waitFor(() => expect(api.checkNote).toHaveBeenLastCalledWith("All good. Costs $5", "Clean.typ"), { timeout: 2000 });
     expect(await problemsButton()).toBeInTheDocument();
   });
 

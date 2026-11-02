@@ -53,6 +53,49 @@ mod drawing_maths {
     }
 }
 
+/// The picture reaches as far as the maths does: below the line for subscripts, above it for
+/// tall superscripts, or they'd be cut off.
+mod nothing_is_cut_off {
+    use super::*;
+
+    #[test]
+    fn a_subscript_below_the_line_is_in_the_picture() {
+        let (_, plain) = size_of(&render_maths("$k$").unwrap());
+        let (_, with_subscript) = size_of(&render_maths("$k_(j+1)$").unwrap());
+
+        assert!(with_subscript > plain + 2.0, "{with_subscript} vs {plain}");
+    }
+
+    #[test]
+    fn a_tall_superscript_is_in_the_picture() {
+        let (_, plain) = size_of(&render_maths("$alpha$").unwrap());
+        let (_, with_superscript) = size_of(&render_maths("$alpha^(5^2)$").unwrap());
+
+        assert!(with_superscript > plain + 2.0, "{with_superscript} vs {plain}");
+    }
+}
+
+/// So the editor can line the maths up with the text around it: how far it reaches below the
+/// baseline (in points), written on the picture.
+mod lining_up_with_the_text {
+    use super::*;
+
+    fn descent_of(svg: &str) -> f64 {
+        let at = svg.find("data-descent=\"").expect("no descent") + "data-descent=\"".len();
+        svg[at..].split('"').next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn maths_sitting_on_the_line_reaches_nowhere_below_it() {
+        assert!(descent_of(&render_maths("$x$").unwrap()) < 0.5);
+    }
+
+    #[test]
+    fn a_subscript_reaches_below_it() {
+        assert!(descent_of(&render_maths("$k_(j+1)$").unwrap()) > 2.0);
+    }
+}
+
 mod maths_with_mistakes {
     use super::*;
 

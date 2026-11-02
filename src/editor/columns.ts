@@ -7,7 +7,9 @@ import { defaultKeymap, redo, undo } from "@codemirror/commands";
 import { Annotation, EditorState, Prec, StateField, Transaction } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from "@codemirror/view";
 import { mdiCodeBraces, mdiTableColumnPlusAfter, mdiTableColumnRemove, mdiTextBoxOutline } from "@mdi/js";
+import { gripIcon, makeIcon, registerColumn, startDrag } from "./blockHandles";
 import { editorFeatures } from "./features";
+import { notePath } from "./noteLinks";
 import type { Range } from "./formatting";
 
 export type ColumnsBlock = Range & {
@@ -152,12 +154,18 @@ function intoColumns(key: "ArrowRight" | "ArrowDown" | "ArrowLeft" | "ArrowUp") 
     const head = selection.head;
     const line = note.state.doc.lineAt(head);
     for (const block of findColumns(note.state.doc.toString())) {
+      // Only line breaks between (one, or the hidden blank line between paragraphs).
+      const touching = (from: number, to: number) => from < to && /^\n[ \t]*\n?$/.test(note.state.doc.sliceString(from, to));
       const before =
         block.from > 0 &&
-        (key === "ArrowRight" ? head === block.from - 1 : key === "ArrowDown" && line.to === block.from - 1 && sameRow(note, head, line.to));
+        (key === "ArrowRight"
+          ? head === line.to && touching(head, block.from)
+          : key === "ArrowDown" && touching(line.to, block.from) && sameRow(note, head, line.to));
       const after =
         block.to < note.state.doc.length &&
-        (key === "ArrowLeft" ? head === block.to + 1 : key === "ArrowUp" && line.from === block.to + 1 && sameRow(note, head, line.from));
+        (key === "ArrowLeft"
+          ? head === line.from && touching(block.to, head)
+          : key === "ArrowUp" && touching(block.to, line.from) && sameRow(note, head, line.from));
       if (!before && !after) continue;
       const views = columnViews(note, block);
       if (!views?.length) return false;
@@ -171,17 +179,6 @@ const intoColumnsKeys = Prec.high(
   keymap.of((["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"] as const).map((key) => ({ key, run: intoColumns(key) }))),
 );
 
-function icon(path: string) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "15");
-  svg.setAttribute("height", "15");
-  const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  shape.setAttribute("d", path);
-  shape.setAttribute("fill", "currentColor");
-  svg.append(shape);
-  return svg;
-}
 
 /** Whether a column's cursor is at its very start or end (nothing selected). */
 function atEdge(view: EditorView, edge: "start" | "end") {
@@ -226,11 +223,24 @@ class ColumnsWidget extends WidgetType {
       b.setAttribute("aria-label", label);
       b.title = label;
       b.disabled = disabled;
-      b.append(icon(path));
+      b.append(makeIcon(path, 15));
       b.addEventListener("mousedown", (event) => event.preventDefault());
       b.addEventListener("click", run);
       bar.append(b);
     };
+    // The columns' grip: drags them as one block.
+    const grip = document.createElement("button");
+    grip.type = "button";
+    grip.className = "cm-columns-grip";
+    grip.setAttribute("aria-label", "Drag to move");
+    grip.title = "Drag to move";
+    grip.append(gripIcon());
+    grip.addEventListener("mousedown", (event) => {
+      const at = locate(note, element);
+      if (event.button !== 0 || !at) return;
+      startDrag(note, { from: at.from, to: at.to, kind: "columns" }, event, grip);
+    });
+    bar.append(grip);
     button("Add column", mdiTableColumnPlusAfter, () => this.addColumn(note, element));
     button("Remove column", mdiTableColumnRemove, () => this.removeColumn(note, element), panes <= 2);
     button("Back to text", mdiTextBoxOutline, () => this.backToText(note, element));
@@ -254,7 +264,13 @@ class ColumnsWidget extends WidgetType {
       grid.append(pane);
       const pick = block?.panes[i];
       const doc = pick ? this.source.slice(pick.from, pick.to) : "";
-      views.push(this.columnEditor(note, element, pane, i, doc));
+      const view = this.columnEditor(note, element, pane, i, doc);
+      registerColumn(view, {
+        note,
+        offset: () => locate(note, element)?.panes[i]?.from ?? null,
+        columnsAt: () => locate(note, element)?.from ?? null,
+      });
+      views.push(view);
     }
     element.append(bar, grid);
     shown.set(element, { views });
@@ -292,6 +308,7 @@ class ColumnsWidget extends WidgetType {
           ),
           keymap.of(defaultKeymap),
           EditorView.contentAttributes.of({ "aria-label": `Column ${index + 1}`, spellcheck: "true" }),
+          notePath.of(note.state.facet(notePath)),
           editorFeatures("typst", { inColumn: true }),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged || update.transactions.some((t) => t.annotation(fromNote))) return;
@@ -409,9 +426,9 @@ const theme = EditorView.theme({
   ".cm-columns-bar": {
     position: "absolute",
     top: "0.25em",
-    left: "-34px",
-    // Reaching the columns, so moving from them to it keeps it shown.
-    paddingRight: "10px",
+    left: "-48px",
+    // Reaching the handles of the first column's blocks, so moving to it keeps it shown.
+    paddingRight: "6px",
     display: "flex",
     flexDirection: "column",
     gap: "2px",
@@ -423,13 +440,14 @@ const theme = EditorView.theme({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "24px",
-    height: "24px",
+    width: "22px",
+    height: "22px",
     borderRadius: "6px",
     color: "#737373",
   },
   ".cm-columns-bar button:hover:not(:disabled)": { background: "#f5f5f5", color: "#262626" },
   ".cm-columns-bar button:disabled": { color: "#d4d4d4" },
+  ".cm-columns-bar .cm-columns-grip": { cursor: "grab" },
   ".cm-columns": { display: "grid", gap: "1.75em" },
   // A light outline around each column, a little wider than its text (which stays in line).
   ".cm-column": {

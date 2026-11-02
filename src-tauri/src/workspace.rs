@@ -56,6 +56,32 @@ struct SettingsData {
     last_workspace: Option<PathBuf>,
     #[serde(default)]
     recent_workspaces: Vec<PathBuf>,
+    #[serde(default)]
+    editor: EditorSettings,
+}
+
+/// How the editor behaves, in every workspace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EditorSettings {
+    /// Whether blocks show a handle in the margin to drag them around.
+    pub block_handles: bool,
+}
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        Self { block_handles: true }
+    }
+}
+
+pub fn editor_settings(settings: &Settings) -> EditorSettings {
+    settings.load().editor
+}
+
+pub fn save_editor_settings(settings: &Settings, editor: &EditorSettings) -> std::io::Result<()> {
+    let mut data = settings.load();
+    data.editor = editor.clone();
+    settings.save(&data)
 }
 
 impl Settings {

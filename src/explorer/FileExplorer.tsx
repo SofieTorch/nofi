@@ -1,6 +1,8 @@
 import { mdiFilePlusOutline, mdiPin, mdiPinOutline } from "@mdi/js";
+import { useState } from "react";
 import type { ExplorerLayout, FileEntry } from "../api";
 import { IconButton } from "../ui/IconButton";
+import { FileMenu } from "./FileMenu";
 import { FileTree, type Renaming } from "./FileTree";
 
 type Props = {
@@ -22,6 +24,10 @@ type Props = {
   onOpen: (path: string) => void;
   onTogglePinned: () => void;
   onNewNote: () => void;
+  /** Rename (double-click, or right-click › Rename): to type a file's new name. */
+  onStartRenaming: (path: string) => void;
+  /** Right-click › Delete: asks first. */
+  onDelete: (path: string) => void;
 };
 
 export function FileExplorer({
@@ -36,7 +42,10 @@ export function FileExplorer({
   onOpen,
   onTogglePinned,
   onNewNote,
+  onStartRenaming,
+  onDelete,
 }: Props) {
+  const [menu, setMenu] = useState<{ path: string; at: { x: number; y: number } }>();
   const pinned = layout.mode === "pinned";
   const fromLeft = layout.side === "left";
   // Slides in from its edge of the window with a light fade; when hidden it waits fully outside the window.
@@ -80,13 +89,26 @@ export function FileExplorer({
           <p className="px-2 text-sm text-neutral-500">This workspace is empty.</p>
         ) : (
           files && (
-            <FileTree entries={files} highlightedPath={highlightedPath} renaming={renaming}
+            <FileTree
+              entries={files}
+              highlightedPath={highlightedPath}
+              renaming={renaming}
               withMistakes={withMistakes}
               onOpen={onOpen}
+              onStartRenaming={onStartRenaming}
+              onFileMenu={(path, at) => setMenu({ path, at })}
             />
           )
         )}
       </nav>
+      {menu && (
+        <FileMenu
+          at={menu.at}
+          onRename={() => onStartRenaming(menu.path)}
+          onDelete={() => onDelete(menu.path)}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
     </aside>
   );
 }

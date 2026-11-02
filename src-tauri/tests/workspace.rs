@@ -289,3 +289,35 @@ mod listing_recent_workspaces {
         assert_eq!(recent[0], folders.last().unwrap().path());
     }
 }
+
+/// App-wide editor settings, like whether blocks show handles to drag them.
+mod editor_settings {
+    use super::*;
+
+    #[test]
+    fn block_handles_are_shown_by_default() {
+        let dir = TempDir::new().unwrap();
+
+        assert!(editor_settings(&settings_in(&dir)).block_handles);
+    }
+
+    #[test]
+    fn a_change_is_remembered() {
+        let dir = TempDir::new().unwrap();
+
+        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false }).unwrap();
+
+        assert!(!editor_settings(&settings_in(&dir)).block_handles);
+    }
+
+    #[test]
+    fn saving_them_keeps_the_last_workspace() {
+        let dir = TempDir::new().unwrap();
+        let folder = TempDir::new().unwrap();
+        open_and_remember(folder.path(), &settings_in(&dir)).unwrap();
+
+        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false }).unwrap();
+
+        assert_eq!(restore_last_workspace(&settings_in(&dir)).unwrap().path, folder.path());
+    }
+}

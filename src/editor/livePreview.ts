@@ -56,6 +56,9 @@ function show(element: HTMLElement, maths: string, picture: MathsPicture) {
     const image = document.createElement("img");
     image.alt = maths;
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(picture.svg)}`;
+    // On the text's baseline: lowered by as much as the maths reaches below it (like subscripts).
+    const descent = /data-descent="([\d.]+)"/.exec(picture.svg)?.[1];
+    if (descent !== undefined) image.style.verticalAlign = `-${descent}pt`;
     element.append(image);
   } else {
     element.textContent = maths;
@@ -441,6 +444,8 @@ const theme = EditorView.theme({
   ".cm-inline-code": { backgroundColor: "#f5f5f5", borderRadius: "4px", padding: "0.1em 0.25em" },
   ".cm-math": { color: "#7c3aed" },
   ".cm-maths img": { display: "inline-block", verticalAlign: "middle" },
+  // Inline maths sits on the line like text (its picture says how far below it reaches).
+  ".cm-maths:not(.cm-maths-display) img": { verticalAlign: "baseline" },
   ".cm-maths-display": { display: "block", textAlign: "center", padding: "0.4em 0" },
   ".cm-maths-drawing": { color: "#a3a3a3", fontFamily: "ui-monospace, Menlo, monospace" },
   ".cm-maths-error": {

@@ -22,7 +22,7 @@ beforeEach(() => {
     "Papers/Attention.typ": "Notes on attention.",
   };
   vi.mocked(api.listFiles).mockResolvedValue([
-    folder("Papers", [file("Papers/Attention.typ"), file("Papers/attention.pdf")]),
+    folder("Papers", [file("Papers/Attention.typ"), file("Papers/attention.pdf"), file("Papers/data.csv")]),
     file("Ideas.typ"),
     file("Todo.md"),
   ]);
@@ -93,12 +93,13 @@ describe("Opening a note", () => {
     expect(screen.getByRole("listitem", { current: true })).toHaveTextContent("Todo.md");
   });
 
-  it("files that aren't notes, like PDFs, don't open as notes", async () => {
+  it("files that aren't notes don't open as notes (PDFs open in the PDF reader)", async () => {
     await renderOpenWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Papers" }));
 
-    expect(screen.getByText("attention.pdf")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "attention.pdf" })).not.toBeInTheDocument();
+    expect(screen.getByText("data.csv")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "data.csv" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "attention.pdf" })).toBeInTheDocument();
   });
 
   it("a new note opens straight away, while you type its name", async () => {
@@ -186,6 +187,16 @@ describe("Maths", () => {
 
     expect(api.renderMaths).toHaveBeenCalledWith("$x^2$");
     expect(await within(editor).findByRole("img", { name: "$x^2$" })).toBeInTheDocument();
+  });
+
+  it("sits on the line like text: lowered by as much as it reaches below it (like a subscript)", async () => {
+    notes["Ideas.typ"] = "So $k_(j+1)$ holds.";
+    vi.mocked(api.renderMaths).mockResolvedValue('<svg data-descent="3.20" xmlns="http://www.w3.org/2000/svg"/>');
+    await renderOpenWorkspace();
+
+    const editor = await openNote("Ideas.typ");
+
+    expect(await within(editor).findByRole("img", { name: "$k_(j+1)$" })).toHaveStyle({ verticalAlign: "-3.20pt" });
   });
 
   it("shows its Typst source to edit when the cursor is in it", async () => {

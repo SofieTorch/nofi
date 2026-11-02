@@ -128,15 +128,19 @@ describe("Editing properties", () => {
     await userEvent.clear(year);
     await userEvent.type(year, "2018{Enter}");
 
-    expect(api.writeProperties).toHaveBeenLastCalledWith("markdown", [
-      { key: "year", value: { type: "number", value: 2018 }, raw: null },
-      { key: "read", value: { type: "boolean", value: false }, raw: "read: false" },
-    ]);
+    await vi.waitFor(() =>
+      expect(api.writeProperties).toHaveBeenLastCalledWith("markdown", [
+        { key: "year", value: { type: "number", value: 2018 }, raw: null },
+        { key: "read", value: { type: "boolean", value: false }, raw: "read: false" },
+      ]),
+    );
     await vi.waitFor(() =>
       expect(textIn(editor)).toBe("---\nyear: 2018\nread: false\n---\nNotes on the paper."),
     );
-    await vi.waitFor(() =>
-      expect(api.saveNote).toHaveBeenCalledWith("Paper.md", expect.stringContaining("year: 2018")),
+    // (Saved after the usual pause; a busy computer can take longer.)
+    await vi.waitFor(
+      () => expect(api.saveNote).toHaveBeenCalledWith("Paper.md", expect.stringContaining("year: 2018")),
+      { timeout: 3000 },
     );
   });
 

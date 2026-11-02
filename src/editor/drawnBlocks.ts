@@ -30,7 +30,7 @@ export function findDrawnBlocks(text: string): DrawnBlock[] {
  * Where the bracket at `open` closes, or -1. In code, (), [] and {} must match and "quotes" are
  * skipped; inside [content], only [ ] count (text can have any parentheses), except after #code.
  */
-function matchingClose(text: string, open: number): number {
+export function matchingClose(text: string, open: number): number {
   const stack: string[] = [text[open]];
   const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
   for (let i = open + 1; i < text.length; i++) {

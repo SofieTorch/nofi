@@ -1,9 +1,10 @@
 //! What the Typst compiler can see while drawing a note or its maths.
 
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Duration};
-use typst::syntax::{FileId, Source};
+use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst_kit::fonts::FontStore;
 use typst::utils::LazyHash;
@@ -17,10 +18,13 @@ pub fn readable(message: &str) -> String {
 }
 
 /// Everything the compiler can see: one note's text, the standard library and the fonts (the
-/// ones that come with Typst, then the computer's own).
-/// No files and no packages, so a note can't reach anything else on the computer.
+/// ones that come with Typst, then the computer's own). A note in a workspace can read the
+/// workspace's files too (like its images), with paths from the note's folder; nothing outside
+/// it, and no packages, so a note can't reach anything else on the computer.
 pub struct NoteWorld {
     source: Source,
+    /// The workspace's folder, when the note is in one.
+    root: Option<PathBuf>,
 }
 
 struct Shared {
@@ -51,7 +55,27 @@ pub fn font_families() -> Vec<String> {
 
 impl NoteWorld {
     pub fn new(text: String) -> Self {
-        Self { source: Source::detached(text) }
+        Self { source: Source::detached(text), root: None }
+    }
+
+    /// A note at a path in a workspace (relative to its folder): it can use the workspace's files.
+    pub fn at(text: String, workspace: &std::path::Path, note: &str) -> Self {
+        match VirtualPath::new(note) {
+            Ok(path) => {
+                let id = RootedPath::new(VirtualRoot::Project, path).intern();
+                Self { source: Source::new(id, text), root: Some(workspace.to_path_buf()) }
+            }
+            Err(_) => Self::new(text),
+        }
+    }
+
+    /// A workspace file Typst asks for, as a real path (never outside the workspace).
+    fn real_path(&self, id: FileId) -> FileResult<PathBuf> {
+        let root = self.root.as_ref().ok_or(FileError::AccessDenied)?;
+        if !matches!(id.root(), VirtualRoot::Project) {
+            return Err(FileError::AccessDenied);
+        }
+        id.vpath().realize(root).map_err(|_| FileError::AccessDenied)
     }
 }
 
@@ -70,14 +94,17 @@ impl World for NoteWorld {
 
     fn source(&self, id: FileId) -> FileResult<Source> {
         if id == self.source.id() {
-            Ok(self.source.clone())
-        } else {
-            Err(FileError::AccessDenied)
+            return Ok(self.source.clone());
         }
+        let path = self.real_path(id)?;
+        let text = std::fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
+        Ok(Source::new(id, text))
     }
 
-    fn file(&self, _id: FileId) -> FileResult<Bytes> {
-        Err(FileError::AccessDenied)
+    fn file(&self, id: FileId) -> FileResult<Bytes> {
+        let path = self.real_path(id)?;
+        let bytes = std::fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
+        Ok(Bytes::new(bytes))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
