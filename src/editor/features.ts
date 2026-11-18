@@ -21,10 +21,28 @@ import { suggestions, typstSuggestions } from "./typstSuggestions";
 /**
  * The writing features: the live preview, code blocks, tables, the toolbar and the "/" menu.
  * In a column, what belongs to the whole note (its properties, the checklist rule, columns within
- * columns) is left to the note's editor.
+ * columns) is left to the note's editor. On a board's card, only the writing itself: no handles,
+ * folds, properties or columns; a card that only shows a note (`readOnly`) has no toolbar or menus.
  */
-export function editorFeatures(format: Format, { inColumn = false } = {}) {
+export function editorFeatures(format: Format, { inColumn = false, inCard = false, readOnly = false } = {}) {
   const typst = format === "typst";
+  if (inCard) {
+    return [
+      EditorView.lineWrapping,
+      livePreview(format),
+      codeBlocks(format),
+      images(format),
+      typst ? drawnBlocks() : [],
+      followNoteLinks(format),
+      readOnly
+        ? []
+        : [
+            paragraphs(format),
+            formatToolbar(format),
+            typst ? typstSuggestions([slashMenu("typst"), noteLinkSource("typst")]) : suggestions([slashMenu("markdown"), noteLinkSource("markdown")]),
+          ],
+    ];
+  }
   return [
     EditorView.lineWrapping,
     livePreview(format),

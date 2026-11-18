@@ -14,6 +14,7 @@ import { mdiCommentTextOutline } from "@mdi/js";
 import { cssColour } from "./colours";
 import { drawnMaths, findFormatting, hiddenMarkers, isBeingEdited, type Format, type Span } from "./formatting";
 import { drawnPicture, drawPicture, type MathsPicture } from "./mathsPictures";
+import { followAddress, quotedAddress } from "./noteLinks";
 
 /** Maths drawn by Typst, shown in place of its source until the cursor goes into it. */
 class MathsWidget extends WidgetType {
@@ -70,10 +71,9 @@ function show(element: HTMLElement, maths: string, picture: MathsPicture) {
 /** A note's text without Typst's markup, for the margin. */
 const plain = (source: string) =>
   source
-    .replace(/#[\w.]+(\([^()]*\))?\[/g, "")
+    .replace(/#[\w.]+(\((?:[^()"]|"(?:[^"\\]|\\.)*")*\))?\[/g, "")
     .replace(/[\]*_`]/g, "")
-    .replace(/\\(.)/g, "$1")
-    .trim();
+    .replace(/\\(.)/g, "$1");
 
 /**
  * Notes shown in the margin: footnotes on the right (a number in the text), comments on the left
@@ -87,12 +87,38 @@ class MarginNote extends WidgetType {
     readonly number: number,
     /** How far into the code the cursor goes when clicked (past "#footnote[" or "//"). */
     readonly codeStart: number,
+    /** Its code, for the links in it (a footnote citing a source, say). */
+    readonly source = "",
   ) {
     super();
   }
 
   eq(other: MarginNote) {
-    return other.kind === this.kind && other.text === this.text && other.number === this.number;
+    return other.kind === this.kind && other.text === this.text && other.number === this.number && other.source === this.source;
+  }
+
+  /** The note's text, its links as links (clicking one follows it). */
+  private content() {
+    const links = findFormatting(this.source, "typst").filter((span) => span.kind === "link");
+    const parts: (string | HTMLElement)[] = [];
+    let at = 0;
+    for (const link of links) {
+      if (link.from < at) continue;
+      const address = quotedAddress(link.args);
+      if (!address) continue;
+      parts.push(plain(this.source.slice(at, link.from)));
+      const element = document.createElement("span");
+      element.className = "cm-link";
+      element.dataset.address = address;
+      element.textContent = plain(this.source.slice(link.markers[0].to, link.markers[1].from));
+      parts.push(element);
+      at = link.to;
+    }
+    parts.push(plain(this.source.slice(at)));
+    if (typeof parts[0] === "string") parts[0] = parts[0].trimStart();
+    const last = parts.length - 1;
+    if (typeof parts[last] === "string") parts[last] = (parts[last] as string).trimEnd();
+    return parts.filter((part) => part !== "");
   }
 
   toDOM(view: EditorView) {
@@ -112,13 +138,16 @@ class MarginNote extends WidgetType {
     if (footnote) {
       const number = document.createElement("strong");
       number.textContent = `${this.number}.`;
-      note.append(number, ` ${this.text}`);
+      note.append(number, " ", ...this.content());
     } else {
       note.textContent = this.text;
     }
     reference.append(mark, note);
     reference.addEventListener("mousedown", (event) => {
       event.preventDefault();
+      // A link in it is followed (in a new pane, with ⌘).
+      const link = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-address]") : null;
+      if (link && followAddress(view, link.dataset.address!, "typst", event.metaKey || event.ctrlKey)) return;
       view.focus();
       view.dispatch({ selection: { anchor: view.posAtDOM(reference) + this.codeStart } });
     });
@@ -196,7 +225,24 @@ const content = {
   lowercase: Decoration.mark({ class: "cm-lowercase" }),
   link: Decoration.mark({ class: "cm-link" }),
   footnote: Decoration.mark({ class: "cm-footnote" }),
+  quotation: Decoration.mark({ class: "cm-quotation" }),
 };
+/** A quotation's mark, shown instead of its hidden syntax (`#quote[` and `]`), as Typst prints it. */
+class QuotationMark extends WidgetType {
+  constructor(readonly mark: string) {
+    super();
+  }
+  eq(other: QuotationMark) {
+    return other.mark === this.mark;
+  }
+  toDOM() {
+    const mark = document.createElement("span");
+    mark.className = "cm-quotation-mark";
+    mark.textContent = this.mark;
+    return mark;
+  }
+}
+const quotationMarks = [Decoration.replace({ widget: new QuotationMark("“") }), Decoration.replace({ widget: new QuotationMark("”") })];
 
 /** A setting's value, like `red` in `fill: red`. */
 const fillOf = (args: string | undefined) => /(?:^|,)\s*fill:\s*((?:[^,()]|\([^()]*\))+)/.exec(args ?? "")?.[1];
@@ -274,7 +320,7 @@ function decorate(view: EditorView, format: Format): DecorationSet {
         ? text.slice(span.markers[0].to, span.markers[1].from)
         : text.slice(span.from + 2, span.to);
       const codeStart = footnote ? span.markers[0].to - span.from : 2;
-      const note = new MarginNote(span.kind as "footnote" | "comment", plain(source), footnotes.indexOf(span) + 1, codeStart);
+      const note = new MarginNote(span.kind as "footnote" | "comment", plain(source).trim(), footnotes.indexOf(span) + 1, codeStart, source);
       decorations.push(Decoration.replace({ widget: note }).range(span.from, span.to));
       inMargins.push(span);
       continue;
@@ -296,12 +342,17 @@ function decorate(view: EditorView, format: Format): DecorationSet {
       }
       continue;
     }
-    if (drawn.includes(span)) {
+    // (Maths over several lines is shown as it's written: a picture can't replace line breaks here.)
+    if (drawn.includes(span) && !text.slice(span.from, span.to).includes("\n")) {
       const widget = new MathsWidget(text.slice(span.from, span.to), !!span.display);
       decorations.push(Decoration.replace({ widget }).range(span.from, span.to));
       continue;
     }
     decorations.push(...decorationsFor(view, span));
+    if (span.kind === "quotation" && isHidden(span.markers[0])) {
+      span.markers.forEach((m, n) => decorations.push(quotationMarks[n].range(m.from, m.to)));
+      continue;
+    }
     for (const m of span.markers) {
       if (m.from === m.to) continue;
       decorations.push((isHidden(m) ? hide : marker).range(m.from, m.to));
@@ -326,6 +377,7 @@ function decorationsFor(view: EditorView, span: Span): Ranged<Decoration>[] {
     case "lowercase":
     case "link":
     case "footnote":
+    case "quotation":
     case "code": {
       const [open, close] = span.markers;
       return open.to < close.from ? [content[span.kind].range(open.to, close.from)] : [];
@@ -355,6 +407,7 @@ function decorationsFor(view: EditorView, span: Span): Ranged<Decoration>[] {
     case "list-item":
     case "task":
     case "divider":
+    case "escape":
     // Code blocks are shown by codeBlocks.ts.
     case "codeblock":
       return [];

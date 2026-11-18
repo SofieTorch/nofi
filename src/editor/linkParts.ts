@@ -119,8 +119,21 @@ export function anchorFor(text: string, format: Format, part: Range & { kind: Pa
   return { anchor, change: { from: at, insert: ` <${anchor}>` } };
 }
 
-/** The part of a note an anchor names (a link's address after the #), if it's there. */
+/**
+ * The part of a note an anchor names (a link's address after the #), if it's there. `quote=…` names
+ * text in the note (from a board's card): that text itself.
+ */
 export function findPart(text: string, format: Format, anchor: string): Range | null {
+  if (anchor.startsWith("quote=")) {
+    let quote = anchor.slice(6);
+    try {
+      quote = decodeURIComponent(quote);
+    } catch {
+      // (Written as it is.)
+    }
+    const at = quote ? text.indexOf(quote) : -1;
+    return at < 0 ? null : { from: at, to: at + quote.length };
+  }
   const blocks = findBlocks(text, format);
   const blockAt = (pos: number) => {
     const block = blocks.find((b) => b.from <= pos && pos <= b.to);

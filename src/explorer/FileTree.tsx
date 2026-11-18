@@ -5,6 +5,7 @@ import {
   mdiFileImageOutline,
   mdiFileOutline,
   mdiFilePdfBox,
+  mdiDraw,
   mdiFileTableOutline,
   mdiFolderOpenOutline,
   mdiFolderOutline,
@@ -29,7 +30,8 @@ type Props = {
   highlightedPath?: string;
   renaming?: Renaming;
   /** Opens a note, or a PDF in the reader (other files can't be opened). */
-  onOpen?: (path: string) => void;
+  /** Opens a file; `newPane` with ⌘ (Ctrl elsewhere) held, beside the active pane. */
+  onOpen?: (path: string, newPane: boolean) => void;
   /** Notes known to have mistakes: they get a red dot. */
   withMistakes?: ReadonlySet<string>;
   /** Double-clicking a file's name: to type a new one. */
@@ -63,9 +65,9 @@ export function FileTree(props: Props) {
                 <FileLabel name={entry.name} />
                 <NameField fileName={entry.name} renaming={renaming} />
               </div>
-            ) : (noteFormat(entry.path) || entry.path.toLowerCase().endsWith(".pdf")) && onOpen ? (
+            ) : (noteFormat(entry.path) || /\.(pdf|canvas)$/i.test(entry.path)) && onOpen ? (
               <button
-                onClick={() => onOpen(entry.path)}
+                onClick={(event) => onOpen(entry.path, event.metaKey || event.ctrlKey)}
                 draggable
                 onDragStart={(event) => {
                   // Dropped on a pane, the note opens there; at a pane's edge, beside it.
@@ -220,6 +222,8 @@ function fileIcon(name: string) {
       return mdiFileDocumentOutline;
     case "pdf":
       return mdiFilePdfBox;
+    case "canvas":
+      return mdiDraw;
     case "csv":
     case "tsv":
     case "xlsx":

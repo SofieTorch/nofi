@@ -1,6 +1,9 @@
 // Finds the formatting in a note's text (headings, bold, lists…) so the editor can show it styled
-// while you type, Obsidian-style. Works line by line: quick, and good enough for notes. The real
-// Typst compiler takes over later for things it has to draw, like maths.
+// while you type, Obsidian-style. Typst notes are read with Typst's own parser (typstFormatting.ts);
+// Markdown notes with the scanner below, line by line. The real Typst compiler takes over later
+// for things it has to draw, like maths.
+
+import { typstFormatting } from "./typstFormatting";
 
 export type Format = "typst" | "markdown";
 
@@ -37,6 +40,10 @@ export type Kind =
   | "codeblock"
   /** `#quote(block: true)[…]`. */
   | "quote"
+  /** `#quote[…]`: an inline quotation, shown in quotation marks. */
+  | "quotation"
+  /** A backslash keeping the next character as it is, like `\*`; the backslash is its marker. */
+  | "escape"
   /** `#block(fill: …)[…]`: a shaded box. */
   | "callout"
   /** `#pad(left: …)[…]`. */
@@ -47,42 +54,6 @@ export type Kind =
   /** `- [ ] task` or `- [x] task`: a checklist's task. Its marker is the `- [ ] `. */
   | "task"
   | "comment";
-
-/** Typst's style functions, written like `#highlight[text]`, and the kind of formatting each is. */
-export const STYLE_FUNCTIONS: Record<string, Kind> = {
-  strong: "bold",
-  emph: "italic",
-  highlight: "highlight",
-  strike: "strikethrough",
-  underline: "underline",
-  smallcaps: "smallcaps",
-  super: "superscript",
-  sub: "subscript",
-  overline: "overline",
-  upper: "uppercase",
-  lower: "lowercase",
-  link: "link",
-  text: "text",
-  align: "align",
-  // Only as #par(justify: true)[…]; other paragraph settings are left as code.
-  par: "justify",
-  quote: "quote",
-  block: "callout",
-  pad: "indent",
-  footnote: "footnote",
-};
-
-/** Some functions only count as a style with certain settings; otherwise they're left as code. */
-const NEEDED_SETTINGS: Record<string, RegExp> = {
-  par: /justify:\s*true/,
-  quote: /block:\s*true/,
-  block: /fill:/,
-  pad: /left:/,
-};
-/** Settings in brackets, which may contain quoted text and one more level of brackets. */
-const QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
-const ARGS = String.raw`\((?:[^()"]|${QUOTED}|\((?:[^()"]|${QUOTED})*\))*\)`;
-const STYLE_FUNCTION = new RegExp(`^#(${Object.keys(STYLE_FUNCTIONS).join("|")})(${ARGS})?\\[`);
 
 export type Range = { from: number; to: number };
 
@@ -105,46 +76,26 @@ export type Span = Range & {
   markers: Range[];
 };
 
-type Syntax = {
-  heading: RegExp;
-  list: RegExp;
+/** Markdown's syntax. */
+const MARKDOWN = {
+  heading: /^(#{1,6} +)/,
+  list: /^\s*([-*+] +|\d+\. +)/,
   /** Longest first, so "**" wins over "*". */
-  delimiters: { text: string; kind: Kind }[];
-  math: boolean;
-  comments: boolean;
-};
-
-const syntaxes: Record<Format, Syntax> = {
-  typst: {
-    heading: /^(=+ +)/,
-    list: /^\s*([-+] +)/,
-    delimiters: [
-      { text: "*", kind: "bold" },
-      { text: "_", kind: "italic" },
-    ],
-    math: true,
-    comments: true,
-  },
-  markdown: {
-    heading: /^(#{1,6} +)/,
-    list: /^\s*([-*+] +|\d+\. +)/,
-    delimiters: [
-      { text: "~~", kind: "strikethrough" },
-      // Obsidian's highlight.
-      { text: "==", kind: "highlight" },
-      { text: "**", kind: "bold" },
-      { text: "__", kind: "bold" },
-      { text: "*", kind: "italic" },
-      { text: "_", kind: "italic" },
-    ],
-    math: false,
-    comments: false,
-  },
+  delimiters: [
+    { text: "~~", kind: "strikethrough" },
+    // Obsidian's highlight.
+    { text: "==", kind: "highlight" },
+    { text: "**", kind: "bold" },
+    { text: "__", kind: "bold" },
+    { text: "*", kind: "italic" },
+    { text: "_", kind: "italic" },
+  ] as { text: string; kind: Kind }[],
 };
 
 export function findFormatting(text: string, format: Format): Span[] {
+  if (format === "typst") return typstFormatting(text);
   const spans: Span[] = [];
-  scan(text, 0, text.length, syntaxes[format], spans);
+  scan(text, 0, text.length, spans);
   return spans;
 }
 
@@ -160,28 +111,20 @@ const paragraphEndAt = (text: string, from: number) => {
 };
 
 /**
- * Finds the formatting between `start` and `end`, in order (a style before the styles inside it).
- * Headings, list markers, maths, code and comments are per line; bold and italic can continue to
- * the end of their paragraph; style functions like #highlight[…] can span any lines.
+ * Finds the formatting in a Markdown note between `start` and `end`, in order (a style before the
+ * styles inside it). Headings, list markers and code are per line; bold and italic can continue to
+ * the end of their paragraph.
  */
-function scan(
-  text: string,
-  start: number,
-  end: number,
-  syntax: Syntax,
-  spans: Span[],
-  /** In a style function's [text], whose start counts as the start of a line (like in Typst). */
-  contentStart = false,
-) {
+function scan(text: string, start: number, end: number, spans: Span[]) {
+  const syntax = MARKDOWN;
   let i = start;
   while (i < end) {
     const lineEnd = Math.min(lineEndAt(text, i), end);
 
-    if (i === 0 || text[i - 1] === "\n" || (contentStart && i === start)) {
+    if (i === 0 || text[i - 1] === "\n") {
       const line = text.slice(i, lineEnd);
-      // Fenced code blocks (in Typst, maybe in a #[ … ] that numbers or highlights its lines):
-      // nothing inside them is formatting.
-      const block = codeBlockAt(text, i, lineEnd, end, syntax.math);
+      // Fenced code blocks: nothing inside them is formatting.
+      const block = codeBlockAt(text, i, lineEnd, end, false);
       if (block) {
         spans.push(block);
         i = block.to;
@@ -194,7 +137,7 @@ function scan(
       }
       // Markdown dividers; right under text, dashes make that text a heading instead.
       const afterBlank = i === 0 || text.slice(0, i - 1).endsWith("\n") || i === 1;
-      if (!syntax.math && afterBlank && /^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      if (afterBlank && /^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
         spans.push({ kind: "divider", from: i, to: lineEnd, markers: [] });
         i = lineEnd;
         continue;
@@ -218,7 +161,7 @@ function scan(
         const marker = { from, to: from + list[1].length };
         // A bullet followed by a box, [ ] or [x], is a task.
         const box = /^\[([ xX])\](?: |$)/.exec(text.slice(marker.to, lineEnd));
-        if (box && /^[-*+]/.test(list[1]) && !(syntax === syntaxes.typst && list[1].startsWith("+"))) {
+        if (box && /^[-*+]/.test(list[1])) {
           const task = { from, to: marker.to + box[0].length };
           spans.push({ kind: "task", ...task, checked: box[1] !== " ", markers: [task] });
           i = task.to;
@@ -232,56 +175,30 @@ function scan(
 
     const char = text[i];
     if (char === "\\") {
+      if (i + 1 < end && /[^\p{L}\p{N}\s]/u.test(text[i + 1])) {
+        spans.push({ kind: "escape", from: i, to: i + 2, markers: [{ from: i, to: i + 1 }] });
+      }
       i += 2;
       continue;
     }
-    if (char === "`" || (char === "$" && syntax.math)) {
+    if (char === "`") {
       const close = text.indexOf(char, i + 1);
       if (close !== -1 && close < lineEnd) {
-        const inside = text.slice(i + 1, close);
         spans.push({
-          kind: char === "`" ? "code" : "math",
-          from: i,
-          to: close + 1,
-          ...(char === "$" && { display: /^\s/.test(inside) && /\s$/.test(inside) }),
-          // Maths keeps its dollars: it will be drawn by Typst, not hidden.
-          markers:
-            char === "`"
-              ? [
-                  { from: i, to: i + 1 },
-                  { from: close, to: close + 1 },
-                ]
-              : [],
-        });
-        i = close + 1;
-        continue;
-      }
-    }
-    // Style functions like #highlight[text]: the "#highlight[" and "]" are its markers.
-    const call = syntax.math ? STYLE_FUNCTION.exec(text.slice(i, Math.min(lineEnd + 1, end))) : null;
-    const args = call?.[2]?.slice(1, -1);
-    const understood = call && (!NEEDED_SETTINGS[call[1]] || NEEDED_SETTINGS[call[1]].test(args ?? ""));
-    if (call && understood) {
-      const open = i + call[0].length;
-      const close = closingBracket(text, open, end);
-      if (close !== -1) {
-        spans.push({
-          kind: STYLE_FUNCTIONS[call[1]],
-          ...(args !== undefined && { args }),
+          kind: "code",
           from: i,
           to: close + 1,
           markers: [
-            { from: i, to: open },
+            { from: i, to: i + 1 },
             { from: close, to: close + 1 },
           ],
         });
-        scan(text, open, close, syntax, spans, true);
         i = close + 1;
         continue;
       }
     }
     // Markdown links: [text](address); the brackets and address are its markers.
-    const link = syntax.math ? null : /^\[([^\]\n]*)\]\(([^)\s]*)\)/.exec(text.slice(i, end));
+    const link = /^\[([^\]\n]*)\]\(([^)\s]*)\)/.exec(text.slice(i, end));
     if (link) {
       const labelEnd = i + 1 + link[1].length;
       spans.push({
@@ -294,13 +211,8 @@ function scan(
           { from: labelEnd, to: i + link[0].length },
         ],
       });
-      scan(text, i + 1, labelEnd, syntax, spans);
+      scan(text, i + 1, labelEnd, spans);
       i += link[0].length;
-      continue;
-    }
-    if (syntax.comments && text.startsWith("//", i) && text[i - 1] !== ":") {
-      spans.push({ kind: "comment", from: i, to: lineEnd, markers: [] });
-      i = lineEnd;
       continue;
     }
     const delimiter = syntax.delimiters.find((d) => text.startsWith(d.text, i));
@@ -317,7 +229,7 @@ function scan(
             { from: close, to: close + size },
           ],
         });
-        scan(text, i + size, close, syntax, spans);
+        scan(text, i + size, close, spans);
         i = close + size;
         continue;
       }
@@ -333,7 +245,7 @@ function scan(
 const LINES_RULE = "#show raw.line: it =>";
 
 /** A ``` code block starting at `from` (a line start), with its options; null if there's none. */
-function codeBlockAt(text: string, from: number, lineEnd: number, end: number, typst: boolean): Span | null {
+export function codeBlockAt(text: string, from: number, lineEnd: number, end: number, typst: boolean): Span | null {
   const lineAt = (start: number) => {
     const stop = text.indexOf("\n", start);
     return { from: start, to: stop === -1 || stop > end ? end : stop };
@@ -397,17 +309,6 @@ function codeBlockAt(text: string, from: number, lineEnd: number, end: number, t
     }
   }
   return block;
-}
-
-/** The "]" closing the content that starts at `from` (nested brackets count), or -1. */
-function closingBracket(line: string, from: number, end: number) {
-  let depth = 1;
-  for (let i = from; i < end; i++) {
-    if (line[i] === "\\") i++;
-    else if (line[i] === "[") depth++;
-    else if (line[i] === "]" && --depth === 0) return i;
-  }
-  return -1;
 }
 
 /** Where `delimiter` closes, skipping escaped characters and code; -1 if it doesn't. */

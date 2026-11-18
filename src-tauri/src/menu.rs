@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 
 const NEW_NOTE: &str = "new-note";
 const NEW_MARKDOWN_NOTE: &str = "new-markdown-note";
+const NEW_BOARD: &str = "new-board";
 const CLOSE_WORKSPACE: &str = "close-workspace";
 const TOGGLE_EXPLORER_PINNED: &str = "toggle-explorer-pinned";
 const MOVE_EXPLORER_TO_OTHER_SIDE: &str = "move-explorer-to-other-side";
@@ -19,9 +20,10 @@ const COMMAND_PALETTE: &str = "command-palette";
 const GRAPH_VIEW: &str = "graph-view";
 const CLOSE_PANE: &str = "close-pane";
 
-const ACTIONS: [&str; 14] = [
+const ACTIONS: [&str; 15] = [
     NEW_NOTE,
     NEW_MARKDOWN_NOTE,
+    NEW_BOARD,
     CLOSE_WORKSPACE,
     TOGGLE_EXPLORER_PINNED,
     MOVE_EXPLORER_TO_OTHER_SIDE,
@@ -40,6 +42,7 @@ const ACTIONS: [&str; 14] = [
 struct WorkspaceItems {
     new_note: MenuItem<Wry>,
     new_markdown_note: MenuItem<Wry>,
+    new_board: MenuItem<Wry>,
     close: MenuItem<Wry>,
     pin_explorer: CheckMenuItem<Wry>,
     move_explorer: MenuItem<Wry>,
@@ -62,6 +65,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             false,
             None::<&str>,
         )?,
+        new_board: MenuItem::with_id(app, NEW_BOARD, "New Board", false, None::<&str>)?,
         close: MenuItem::with_id(app, CLOSE_WORKSPACE, "Close Workspace", false, None::<&str>)?,
         go_to_file: MenuItem::with_id(app, GO_TO_FILE, "Go to File…", false, Some("CmdOrCtrl+P"))?,
         command_palette: MenuItem::with_id(
@@ -101,10 +105,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let file = find_or_add_submenu(app, &menu, "File", None)?;
     file.insert(&items.new_note, 0)?;
     file.insert(&items.new_markdown_note, 1)?;
-    file.insert(&items.go_to_file, 2)?;
-    file.insert(&PredefinedMenuItem::separator(app)?, 3)?;
-    file.insert(&items.close, 4)?;
-    file.insert(&PredefinedMenuItem::separator(app)?, 5)?;
+    file.insert(&items.new_board, 2)?;
+    file.insert(&items.go_to_file, 3)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 4)?;
+    file.insert(&items.close, 5)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 6)?;
 
     // The app decides what Undo means: typing in the editor, or the last file action elsewhere.
     let edit = find_or_add_submenu(app, &menu, "Edit", Some("File"))?;
@@ -183,6 +188,7 @@ pub fn set_workspace_open(app: &AppHandle, open: bool) {
     if let Some(items) = app.try_state::<WorkspaceItems>() {
         let _ = items.new_note.set_enabled(open);
         let _ = items.new_markdown_note.set_enabled(open);
+        let _ = items.new_board.set_enabled(open);
         let _ = items.close.set_enabled(open);
         let _ = items.pin_explorer.set_enabled(open);
         let _ = items.move_explorer.set_enabled(open);

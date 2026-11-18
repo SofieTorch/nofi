@@ -1,5 +1,6 @@
 // Settings: a panel, opened from the app's menu (Marginalia › Settings…, ⌘,), for how the app
-// behaves in every workspace. For now: whether blocks show handles to drag them around.
+// behaves in every workspace: whether blocks show handles to drag them around, and what boards are
+// drawn on (plain white, the default; or a grid, like Miro's).
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -77,7 +78,7 @@ describe("Block handles setting", () => {
   });
 
   it("turned on again, they do", async () => {
-    vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: false });
+    vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: false, boardBackground: "plain" });
     const settings = await openSettings();
     await userEvent.click(within(settings).getByRole("switch", { name: "Block handles" }));
     await userEvent.keyboard("{Escape}");
@@ -92,15 +93,45 @@ describe("Block handles setting", () => {
 
     await userEvent.click(within(settings).getByRole("switch", { name: "Block handles" }));
 
-    expect(api.saveEditorSettings).toHaveBeenCalledWith({ blockHandles: false });
+    expect(api.saveEditorSettings).toHaveBeenCalledWith({ blockHandles: false, boardBackground: "plain" });
   });
 
   it("a choice saved before is used straight away", async () => {
-    vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: false });
+    vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: false, boardBackground: "plain" });
     render(<App />);
 
     const editor = await openNote();
 
     await vi.waitFor(() => expect(handleShownOnHover(editor)).toBe(false));
+  });
+});
+
+describe("Board background setting", () => {
+  beforeEach(() => {
+    vi.mocked(api.listFiles).mockResolvedValue([file("Paper.typ"), file("Ideas.canvas")]);
+    vi.mocked(api.readNote).mockResolvedValue("");
+  });
+
+  const openBoard = async () => {
+    await userEvent.click(await screen.findByRole("button", { name: "Ideas.canvas" }));
+    return screen.findByRole("group", { name: "Board" });
+  };
+
+  it("is plain at first", async () => {
+    const settings = await openSettings();
+
+    expect(within(settings).getByRole("radio", { name: "Plain" })).toBeChecked();
+    await userEvent.keyboard("{Escape}");
+    expect(await openBoard()).toHaveAttribute("data-background", "plain");
+  });
+
+  it("can be a grid, and the choice is saved", async () => {
+    const settings = await openSettings();
+
+    await userEvent.click(within(settings).getByRole("radio", { name: "Grid" }));
+    await userEvent.keyboard("{Escape}");
+
+    expect(await openBoard()).toHaveAttribute("data-background", "grid");
+    expect(api.saveEditorSettings).toHaveBeenCalledWith({ blockHandles: true, boardBackground: "grid" });
   });
 });

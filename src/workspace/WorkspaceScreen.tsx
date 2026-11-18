@@ -20,9 +20,10 @@ import { UNDO_IN_FIELD } from "../editor/TableGrid";
 import { SHOW_SUGGESTIONS } from "../ui/SuggestingInput";
 import { FileHistory } from "./fileHistory";
 import { GraphView } from "./GraphView";
-import { activeFile, activePath, closeGroup, closeTab, emptyLayout, findTab, groups, placeTab, tabFor, type Layout, openTab, removePath, renamePath, split } from "./layout";
+import { activeFile, activePath, closeGroup, closeTab, emptyLayout, findTab, groups, keepTab, placeTab, tabFor, type Layout, openTab, removePath, renamePath, split } from "./layout";
 import { Panes } from "./Panes";
 import { PdfView } from "./PdfView";
+import { BoardView } from "../board/BoardView";
 import { TopBar } from "./TopBar";
 
 const SAVE_PROBLEM = "Couldn't save the note:";
@@ -48,13 +49,23 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   const lastNoteRef = useRef<string>(undefined);
   if (openPath) lastNoteRef.current = openPath;
   const lastNote = lastNoteRef.current;
-  /** Opens a note (or a PDF, in the reader) in the active pane, or shows it where it's open already. */
-  const openNote = (path: string) => setPanes((current) => openTab(current, tabFor(path)));
+  /**
+   * Opens a note (or a PDF, in the reader) in the active pane, or shows it where it's open already.
+   * By default in a preview tab (the next file opened replaces it); `newPane` opens it beside the
+   * active pane (⌘-click).
+   */
+  const openNote = (path: string, { preview = true, newPane = false } = {}) =>
+    setPanes((current) => {
+      const tab = { ...tabFor(path), preview };
+      return newPane ? placeTab(current, tab, { group: current.active, side: "right" }) : openTab(current, tab);
+    });
+  /** A note typed in is kept: its preview tab becomes an ordinary one. */
+  const keepNote = (path: string) => setPanes((current) => keepTab(current, tabFor(path)));
   const closeNote = (path: string) => setPanes((current) => removePath(current, path));
   // A new note's name is ready to type over until it's saved or kept.
   const [renamingPath, setRenamingPath] = useState<string>();
   const [problem, setProblem] = useState<string>();
-  const [editorSettings, setEditorSettings] = useState<EditorSettings>({ blockHandles: true });
+  const [editorSettings, setEditorSettings] = useState<EditorSettings>({ blockHandles: true, boardBackground: "plain" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** The palette, when open: what was typed at first ("" for notes, ">" for commands). */
   const [palette, setPalette] = useState<string>();
@@ -141,11 +152,12 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     };
   }, []);
 
-  async function newNote(format?: NoteFormat) {
+  /** A new note (Typst unless told), or a new board, opened to name it. */
+  async function newNote(format?: NoteFormat | "board") {
     try {
-      const path = format ? await api.createNote(format) : await api.createNote();
+      const path = format === "board" ? await api.createBoard() : format ? await api.createNote(format) : await api.createNote();
       setProblem(undefined);
-      openNote(path);
+      openNote(path, { preview: false });
       setRenamingPath(path);
       await loadFiles();
       fileHistory.record({
@@ -161,11 +173,11 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
         redo: async () => {
           await api.restoreEmptyNote(path);
           await loadFiles();
-          openNote(path);
+          openNote(path, { preview: false });
         },
       });
     } catch (error) {
-      setProblem(`Couldn't create the note: ${error}`);
+      setProblem(`Couldn't create the ${format === "board" ? "board" : "note"}: ${error}`);
     }
   }
 
@@ -216,15 +228,14 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       const { path } = target;
       const exists = (entries: FileEntry[]): boolean =>
         entries.some((entry) => entry.path === path || (entry.kind === "folder" && exists(entry.children)));
-      const inApp = noteFormat(path) || path.toLowerCase().endsWith(".pdf");
+      const inApp = noteFormat(path) || /\.(pdf|canvas)$/i.test(path);
       if (!inApp) return await api.openFile(path);
       if (noteFormat(path)) {
         if (!(await ensureNote(path))) return;
       } else if (!exists(filesRef.current)) {
         return setProblem(`“${fileName(path)}” isn't in the workspace.`);
       }
-      if (newPane) setPanes((current) => placeTab(current, tabFor(path), { group: current.active, side: "right" }));
-      else openNote(path);
+      openNote(path, { newPane });
       if (target.part) setGoTo({ path, part: target.part });
     } catch (reason) {
       setProblem(`Couldn't open the link: ${reason}`);
@@ -238,11 +249,26 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   async function openFromGraph(path: string, graphPane: string) {
     if (!(await ensureNote(path))) return;
     setPanes((current) => {
-      const tab = { kind: "note", path } as const;
+      const tab = { kind: "note", path, preview: true } as const;
       if (findTab(current, tab)) return openTab(current, tab);
       const other = groups(current).find((group) => group.id !== graphPane);
       return other ? openTab(current, tab, other.id) : split(current, graphPane, "right", tab);
     });
+  }
+
+  /**
+   * Opens a file beside a pane (what a board's card shows, a PDF's note), so that pane stays in
+   * view: in the pane next to it (or a new one at its right), at a part. With ⌘, in a new pane.
+   */
+  function openBeside(path: string, part: string | undefined, newPane: boolean, boardPane: string) {
+    const tab = { ...tabFor(path), preview: true };
+    setPanes((current) => {
+      if (newPane) return placeTab(current, tab, { group: boardPane, side: "right" });
+      if (findTab(current, tab)) return openTab(current, tab);
+      const other = groups(current).find((group) => group.id !== boardPane);
+      return other ? openTab(current, tab, other.id) : split(current, boardPane, "right", tab);
+    });
+    if (part) setGoTo({ path, part });
   }
 
   const closeActivePane = () => setPanes((current) => closeGroup(current, current.active));
@@ -363,7 +389,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   }
 
   useEffect(() => {
-    api.getEditorSettings().then(applyEditorSettings, () => applyEditorSettings({ blockHandles: true }));
+    api.getEditorSettings().then(applyEditorSettings, () => applyEditorSettings({ blockHandles: true, boardBackground: "plain" }));
   }, []);
 
   function changeEditorSettings(settings: EditorSettings) {
@@ -397,6 +423,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     const unlisten = api.onMenuAction((action) => {
       if (action === "new-note") newNote();
       if (action === "new-markdown-note") newNote("markdown");
+      if (action === "new-board") newNote("board");
       if (action === "toggle-explorer-pinned") togglePinned();
       if (action === "move-explorer-to-other-side") moveToOtherSide();
       if (action === "toggle-pages") toggleShowPages();
@@ -422,7 +449,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     error: filesError,
     highlightedPath: activeFile(panes),
     withMistakes,
-    onOpen: openNote,
+    onOpen: (path: string, newPane: boolean) => openNote(path, { newPane }),
     renaming: renamingPath
       ? {
           path: renamingPath,
@@ -444,6 +471,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       run: () => changeEditorSettings({ ...editorSettings, blockHandles: !editorSettings.blockHandles }),
     },
     { label: "File: New Note", run: () => newNote() },
+    { label: "File: New Board", run: () => newNote("board") },
     { label: "File: New Markdown Note", run: () => newNote("markdown") },
     { label: `View: ${showPages ? "Hide" : "Show"} Pages`, run: toggleShowPages },
     { label: `View: ${layout.mode === "pinned" ? "Unpin" : "Pin"} File Explorer`, run: togglePinned },
@@ -487,8 +515,24 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
             label={(tab) => (tab.kind === "graph" ? "Graph" : tab.kind === "pdf" ? fileName(tab.path) : nameOf(tab.path))}
             title={(tab) => (tab.kind === "graph" ? "Graph" : tab.path)}
             content={(tab, group) =>
-              tab.kind === "pdf" ? (
-                <PdfView key={tab.path} path={tab.path} goTo={goTo?.path === tab.path ? goTo : undefined} />
+              tab.kind === "board" ? (
+                <BoardView
+                  key={tab.path}
+                  path={tab.path}
+                  autosave={autosave}
+                  version={saves}
+                  background={editorSettings.boardBackground}
+                  onEdited={keepNote}
+                  onOpen={(path, part, newPane) => openBeside(path, part, newPane, group.id)}
+                />
+              ) : tab.kind === "pdf" ? (
+                <PdfView
+                  key={tab.path}
+                  path={tab.path}
+                  goTo={goTo?.path === tab.path ? goTo : undefined}
+                  version={saves}
+                  onOpenNote={(note, part) => openBeside(note, part, false, group.id)}
+                />
               ) : tab.kind === "graph" ? (
                 <GraphView
                   files={files ?? []}
@@ -504,6 +548,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
                   showPages={showPages}
                   reveal={reveal?.path === tab.path ? reveal : undefined}
                   goTo={goTo?.path === tab.path ? goTo : undefined}
+                  onEdited={keepNote}
                   onMissingPart={(path, part) => setProblem(`Couldn't find “${part}” in ${fileName(path)}.`)}
                   onMistakes={noteMistakes}
                 />
@@ -538,7 +583,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
           initial={palette}
           files={files ?? []}
           commands={commands}
-          onOpenFile={openNote}
+          onOpenFile={(path) => openNote(path)}
           searchText={searchText}
           onOpenMatch={(match) => {
             openNote(match.path);

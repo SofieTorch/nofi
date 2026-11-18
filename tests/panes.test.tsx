@@ -3,7 +3,7 @@
 // or bottom) splits its pane; dropped in the middle or on the tabs, it goes into that pane. There
 // are no empty panes: a pane goes with its last tab, or with "Close pane". The line between panes
 // can be dragged to resize them. A note is open in one pane at most. How panes are arranged is
-// specified in pane-layout.test.ts.
+// specified in pane-layout.test.ts. (Notes here are kept open, not previews: see preview-tabs.test.tsx.)
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -34,9 +34,11 @@ async function start() {
   await screen.findByText("Paper.typ");
 }
 
+/** Opens a note from the explorer, and keeps its tab (so the next note gets a tab of its own; see preview-tabs.test.tsx). */
 async function open(name: string) {
   await userEvent.click(explorer().getByText(name));
   await screen.findByRole("textbox", { name });
+  await userEvent.dblClick(screen.getByRole("tab", { name: name.replace(/\.[^.]+$/, "") }));
 }
 
 /** Drags a note from the explorer onto a pane's content (the first pane, unless told), at a spot. */

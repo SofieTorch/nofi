@@ -4,13 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "npm run parser && vite",
+    "build": "npm run parser && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "test": "npm run parser && vitest run",
+    "test:watch": "npm run parser && vitest",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "parser": "node scripts/build-parser.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",

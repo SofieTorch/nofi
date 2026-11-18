@@ -15,7 +15,7 @@ type Props = {
 };
 
 const notesIn = (entries: FileEntry[]): string[] =>
-  entries.flatMap((entry) => (entry.kind === "folder" ? notesIn(entry.children) : noteFormat(entry.path) ? [entry.path] : []));
+  entries.flatMap((entry) => (entry.kind === "folder" ? notesIn(entry.children) : noteFormat(entry.path) || entry.path.endsWith(".canvas") ? [entry.path] : []));
 const nameOf = (path: string) => path.split("/").pop()!.replace(/\.[^.]+$/, "");
 
 /**

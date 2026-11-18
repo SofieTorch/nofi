@@ -1,6 +1,8 @@
 //! The links between the workspace's notes, for the graph view. A link is a plain link to a note's
 //! file, written from the linking note's folder: `#link("Ideas.md")[…]` in Typst, `[…](Ideas.md)`
-//! in Markdown (spaces written as %20).
+//! in Markdown (spaces written as %20). A note's `source` property (the file it's about, like a
+//! PDF its notes are on) is a link too. A board (`.canvas`) links to the notes on it, and to those
+//! its text cards link to.
 
 use crate::files::{list_files, EntryKind, FileEntry};
 use serde::Serialize;
@@ -21,8 +23,14 @@ pub fn note_links(workspace: &Path) -> Vec<NoteLink> {
     let mut found = BTreeSet::new();
     for note in notes {
         let Ok(text) = fs::read_to_string(workspace.join(&note)) else { continue };
+        if note.ends_with(".canvas") {
+            for target in board_links(&note, &text) {
+                found.insert((note.clone(), target));
+            }
+            continue;
+        }
         let markdown = note.ends_with(".md");
-        for address in addresses(&without_code(&text), markdown) {
+        for address in links_in(&text, markdown) {
             if let Some(target) = resolve(&note, &address, markdown) {
                 if target != note {
                     found.insert((note.clone(), target));
@@ -33,11 +41,33 @@ pub fn note_links(workspace: &Path) -> Vec<NoteLink> {
     found.into_iter().map(|(from, to)| NoteLink { from, to }).collect()
 }
 
+/// A board's links: the notes shown as cards (paths from the workspace), and the links written in
+/// its text cards (Typst, from the board's folder).
+fn board_links(board: &str, text: &str) -> Vec<String> {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else { return vec![] };
+    let mut found = vec![];
+    for node in json["nodes"].as_array().into_iter().flatten() {
+        match node["type"].as_str() {
+            Some("file") => {
+                if let Some(file) = node["file"].as_str().filter(|file| is_note(file)) {
+                    found.push(file.to_string());
+                }
+            }
+            Some("text") => {
+                let text = node["text"].as_str().unwrap_or("");
+                found.extend(addresses(&without_code(text), false).iter().filter_map(|a| resolve(board, a, false)));
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 fn collect_notes(entries: &[FileEntry], notes: &mut Vec<String>) {
     for entry in entries {
         match entry.kind {
             EntryKind::Folder => collect_notes(&entry.children, notes),
-            EntryKind::File if is_note(&entry.path) => notes.push(entry.path.clone()),
+            EntryKind::File if is_note(&entry.path) || entry.path.ends_with(".canvas") => notes.push(entry.path.clone()),
             EntryKind::File => {}
         }
     }
@@ -65,6 +95,26 @@ fn without_code(text: &str) -> String {
 }
 
 /// The addresses of the links written in a note.
+/// The addresses a note links to: its links, and its `source` property.
+fn links_in(text: &str, markdown: bool) -> Vec<String> {
+    let mut found = addresses(&without_code(text), markdown);
+    found.extend(source_of(text, markdown));
+    found
+}
+
+/// What a note's `source` property names, if it has one (written as a path, like a link's address).
+fn source_of(text: &str, markdown: bool) -> Option<String> {
+    use crate::notes::NoteFormat;
+    use crate::properties::{find_block, parse_block, Value};
+    let format = if markdown { NoteFormat::Markdown } else { NoteFormat::Typst };
+    let block = find_block(text, format)?;
+    let properties = parse_block(&text[block], format).ok()?;
+    match properties.into_iter().find(|p| p.key == "source")?.value {
+        Value::Text(source) if !source.trim().is_empty() => Some(source.trim().to_string()),
+        _ => None,
+    }
+}
+
 fn addresses(text: &str, markdown: bool) -> Vec<String> {
     let mut found = vec![];
     if markdown {
@@ -104,9 +154,31 @@ fn addresses(text: &str, markdown: bool) -> Vec<String> {
     found
 }
 
+/// The notes that link to a file (any file, like a PDF), maybe to a part of it.
+pub fn notes_linking_to(workspace: &Path, file: &str) -> Vec<String> {
+    let mut notes = vec![];
+    collect_notes(&list_files(workspace).unwrap_or_default(), &mut notes);
+    notes
+        .into_iter()
+        .filter(|note| is_note(note) && note != file)
+        .filter(|note| {
+            let Ok(text) = fs::read_to_string(workspace.join(note)) else { return false };
+            let markdown = note.ends_with(".md");
+            links_in(&text, markdown)
+                .iter()
+                .any(|address| resolve_file(note, address, markdown).as_deref() == Some(file))
+        })
+        .collect()
+}
+
 /// The note an address points to, as a workspace path; None for a website, a file that isn't a
 /// note, a place in the same note, or somewhere outside the workspace.
 fn resolve(from: &str, address: &str, markdown: bool) -> Option<String> {
+    resolve_file(from, address, markdown).filter(|path| is_note(path))
+}
+
+/// The file an address points to, as a workspace path (without its part, after the #).
+fn resolve_file(from: &str, address: &str, markdown: bool) -> Option<String> {
     let has_scheme = address.split_once(':').is_some_and(|(scheme, _)| {
         !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
     });
@@ -127,7 +199,7 @@ fn resolve(from: &str, address: &str, markdown: bool) -> Option<String> {
         }
     }
     let path = parts.join("/");
-    is_note(&path).then_some(path)
+    (!path.is_empty()).then_some(path)
 }
 
 fn percent_decode(text: &str) -> Option<String> {

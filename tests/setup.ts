@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
+import { loadTypstParser } from "../src/editor/typstSyntax";
+
+// Typst's parser, built by `npm run parser` (as the app loads it when it starts).
+// @ts-expect-error (no types for Node's modules here)
+const { readFileSync } = await import("node:fs");
+await loadTypstParser(readFileSync("src/editor/typst-parser.wasm"));
 
 afterEach(() => cleanup());
 

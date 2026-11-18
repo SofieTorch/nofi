@@ -21,7 +21,8 @@ type Props = {
   withMistakes?: ReadonlySet<string>;
   /** The note whose name is being typed, if any. */
   renaming?: Renaming;
-  onOpen: (path: string) => void;
+  /** Opens a file; `newPane` with ⌘ (Ctrl elsewhere) held, beside the active pane. */
+  onOpen: (path: string, newPane: boolean) => void;
   onTogglePinned: () => void;
   onNewNote: () => void;
   /** Rename (double-click, or right-click › Rename): to type a file's new name. */

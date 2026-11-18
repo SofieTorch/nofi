@@ -22,3 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+typst-parser/target
+src/editor/typst-parser.wasm

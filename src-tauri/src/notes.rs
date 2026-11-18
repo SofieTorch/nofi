@@ -45,6 +45,21 @@ pub fn create_note(workspace: &Path, format: NoteFormat) -> io::Result<String> {
     unreachable!("there is always a free number")
 }
 
+/// Creates an empty board (whiteboard) at the top of the workspace, `Untitled.canvas`, and returns
+/// its path. An empty file is an empty board.
+pub fn create_board(workspace: &Path) -> io::Result<String> {
+    for number in 1.. {
+        let name = if number == 1 { "Untitled".to_string() } else { format!("Untitled {number}") };
+        let file_name = format!("{name}.canvas");
+        match OpenOptions::new().write(true).create_new(true).open(workspace.join(&file_name)) {
+            Ok(_) => return Ok(file_name),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("there is always a free number")
+}
+
 /// Creates an empty note at a path (relative to the workspace), with the folders it needs: what a
 /// link to a note that doesn't exist yet points to. A note there by then is left as it is.
 pub fn create_note_at(workspace: &Path, note: &str) -> Result<String, NoteError> {
@@ -139,11 +154,19 @@ pub fn rename_note(workspace: &Path, note: &str, new_name: &str) -> Result<Strin
             let same_file = only_capitalisation && Some(&ext) == extension.as_ref();
             !same_file && folder.join(format!("{name}.{ext}")).exists()
         });
+    // A PDF's annotations go with it, so another PDF's can't be in the way.
+    let annotations = crate::files::annotations_of(note).zip(crate::files::annotations_of(&new_path));
+    let taken = taken || annotations.as_ref().is_some_and(|(_, new)| !only_capitalisation && workspace.join(new).exists());
     if taken {
         return Err(RenameError::Taken(name.to_string()));
     }
 
     fs::rename(&old, workspace.join(&new_path)).map_err(|e| RenameError::Io(e.to_string()))?;
+    if let Some((old_annotations, new_annotations)) = annotations {
+        if workspace.join(&old_annotations).is_file() {
+            fs::rename(workspace.join(old_annotations), workspace.join(new_annotations)).map_err(|e| RenameError::Io(e.to_string()))?;
+        }
+    }
     Ok(new_path)
 }
 
@@ -230,17 +253,23 @@ pub fn remove_empty_note(workspace: &Path, note: &str) -> Result<(), NoteError> 
 }
 
 /// Deletes a file (any kind, not a folder) by handing it to `remove`: the app sends it to the
-/// system's Trash. Never touches anything outside the workspace.
+/// system's Trash. A PDF's annotations go with it. Never touches anything outside the workspace.
 pub fn delete_file_with(
     workspace: &Path,
     file: &str,
-    remove: impl FnOnce(&Path) -> io::Result<()>,
+    mut remove: impl FnMut(&Path) -> io::Result<()>,
 ) -> Result<(), NoteError> {
     let path = inside(workspace, file).ok_or(NoteError::NotFound)?;
     if !path.is_file() {
         return Err(NoteError::NotFound);
     }
-    Ok(remove(&path)?)
+    remove(&path)?;
+    if let Some(annotations) = crate::files::annotations_of(file).and_then(|a| inside(workspace, &a)) {
+        if annotations.is_file() {
+            remove(&annotations)?;
+        }
+    }
+    Ok(())
 }
 
 /// Redoes creating a note: brings it back, empty, at the same place. Never overwrites anything.

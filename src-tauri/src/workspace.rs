@@ -66,12 +66,25 @@ struct SettingsData {
 pub struct EditorSettings {
     /// Whether blocks show a handle in the margin to drag them around.
     pub block_handles: bool,
+    /// What boards are drawn on.
+    pub board_background: BoardBackground,
 }
 
 impl Default for EditorSettings {
     fn default() -> Self {
-        Self { block_handles: true }
+        Self { block_handles: true, board_background: BoardBackground::Plain }
     }
+}
+
+/// A board's background: plain white (the default), or a grid like Miro's to line things up by.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BoardBackground {
+    #[default]
+    #[serde(alias = "dots")]
+    Plain,
+    #[serde(alias = "lines")]
+    Grid,
 }
 
 pub fn editor_settings(settings: &Settings) -> EditorSettings {

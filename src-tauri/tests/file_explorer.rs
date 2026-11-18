@@ -42,6 +42,18 @@ mod listing_the_workspace {
     }
 
     #[test]
+    fn a_pdfs_annotations_file_isnt_listed_its_kept_with_the_pdf() {
+        let workspace = workspace();
+        add_file(&workspace, "Papers/attention.pdf");
+        add_file(&workspace, "Papers/attention.annotations.json");
+        add_file(&workspace, "Papers/data.json");
+
+        let entries = list(&workspace);
+
+        assert_eq!(names(&entries[0].children), vec!["attention.pdf", "data.json"]);
+    }
+
+    #[test]
     fn files_and_folders_in_the_workspace_are_listed() {
         let workspace = workspace();
         add_file(&workspace, "ideas.md");

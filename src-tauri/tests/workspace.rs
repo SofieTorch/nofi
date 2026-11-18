@@ -305,9 +305,35 @@ mod editor_settings {
     fn a_change_is_remembered() {
         let dir = TempDir::new().unwrap();
 
-        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false }).unwrap();
+        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false, ..Default::default() }).unwrap();
 
         assert!(!editor_settings(&settings_in(&dir)).block_handles);
+    }
+
+    #[test]
+    fn boards_have_a_plain_background_by_default_and_a_choice_is_remembered() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(editor_settings(&settings_in(&dir)).board_background, BoardBackground::Plain);
+
+        let chosen = EditorSettings { board_background: BoardBackground::Grid, ..Default::default() };
+        save_editor_settings(&settings_in(&dir), &chosen).unwrap();
+
+        assert_eq!(editor_settings(&settings_in(&dir)).board_background, BoardBackground::Grid);
+    }
+
+    #[test]
+    fn settings_saved_before_boards_existed_still_load() {
+        let dir = TempDir::new().unwrap();
+        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false, ..Default::default() }).unwrap();
+        let file = fs::read_dir(dir.path()).unwrap().next().unwrap().unwrap().path();
+        let mut json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        json["editor"].as_object_mut().unwrap().remove("boardBackground");
+        fs::write(&file, json.to_string()).unwrap();
+
+        let loaded = editor_settings(&settings_in(&dir));
+
+        assert!(!loaded.block_handles);
+        assert_eq!(loaded.board_background, BoardBackground::Plain);
     }
 
     #[test]
@@ -316,7 +342,7 @@ mod editor_settings {
         let folder = TempDir::new().unwrap();
         open_and_remember(folder.path(), &settings_in(&dir)).unwrap();
 
-        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false }).unwrap();
+        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false, ..Default::default() }).unwrap();
 
         assert_eq!(restore_last_workspace(&settings_in(&dir)).unwrap().path, folder.path());
     }

@@ -158,7 +158,7 @@ describe("Commands (⌘⇧P)", () => {
 
     await userEvent.keyboard("block handles{Enter}");
 
-    expect(api.saveEditorSettings).toHaveBeenCalledWith({ blockHandles: false });
+    expect(api.saveEditorSettings).toHaveBeenCalledWith({ blockHandles: false, boardBackground: "plain" });
     await chooseInMenu("View › Command Palette…");
     await userEvent.keyboard("block handles");
     expect(options()).toEqual(["Settings: Turn On Block Handles"]);

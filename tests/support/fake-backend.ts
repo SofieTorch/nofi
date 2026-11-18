@@ -35,6 +35,8 @@ export function setUpFakeBackend() {
   vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "pinned" });
   vi.mocked(api.saveExplorerLayout).mockResolvedValue();
   vi.mocked(api.createNote).mockResolvedValue("Untitled.typ");
+  vi.mocked(api.createBoard).mockResolvedValue("Untitled.canvas");
+  vi.mocked(api.notesLinkingTo).mockResolvedValue([]);
   vi.mocked(api.renameNote).mockImplementation(async (path, newName) =>
     path.replace(/[^/]*?(\.[^./]+)?$/, `${newName}$1`),
   );
@@ -51,7 +53,7 @@ export function setUpFakeBackend() {
   vi.mocked(api.openFile).mockResolvedValue();
   vi.mocked(api.saveAsset).mockImplementation(async (name) => `assets/${name}`);
   vi.mocked(api.readWorkspaceFile).mockResolvedValue(new ArrayBuffer(8));
-  vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: true });
+  vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: true, boardBackground: "plain" });
   vi.mocked(api.saveEditorSettings).mockResolvedValue();
   vi.mocked(api.parseProperties).mockResolvedValue([]);
   vi.mocked(api.writeProperties).mockResolvedValue("");
@@ -80,6 +82,7 @@ export function setUpFakeBackend() {
 const menuItems = {
   "File › New Note": "new-note",
   "File › New Markdown Note": "new-markdown-note",
+  "File › New Board": "new-board",
   "File › Close Workspace": "close-workspace",
   "View › Pin File Explorer": "toggle-explorer-pinned",
   "View › Move File Explorer to Other Side": "move-explorer-to-other-side",

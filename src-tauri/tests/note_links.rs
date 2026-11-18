@@ -106,4 +106,44 @@ mod finding_links_between_notes {
 
         assert!(links(&workspace).is_empty());
     }
+
+    #[test]
+    fn finds_the_notes_that_link_to_a_pdf() {
+        let workspace = workspace_with(&[
+            ("Papers/attention notes.typ", "#link(\"attention.pdf#page=3&quote=All\")[p. 3]"),
+            ("Ideas.md", "[paper](Papers/attention.pdf)"),
+            ("Other.typ", "#link(\"Papers/other.pdf\")[other]"),
+            ("Papers/attention.pdf", ""),
+        ]);
+
+        let mut found = notes_linking_to(workspace.path(), "Papers/attention.pdf");
+        found.sort();
+
+        assert_eq!(found, vec!["Ideas.md".to_string(), "Papers/attention notes.typ".to_string()]);
+    }
+
+    #[test]
+    fn a_note_whose_source_property_names_a_pdf_links_to_it() {
+        let workspace = workspace_with(&[
+            ("Papers/attention notes.typ", "#metadata((\n  source: \"attention.pdf\",\n  year: 2017,\n)) <properties>\n\nNothing yet."),
+            ("Reading.md", "---\nsource: Papers/attention.pdf\n---\nLater."),
+            ("Other.typ", "#metadata((\n  title: \"attention.pdf\",\n)) <properties>"),
+            ("Papers/attention.pdf", ""),
+        ]);
+
+        let mut found = notes_linking_to(workspace.path(), "Papers/attention.pdf");
+        found.sort();
+
+        assert_eq!(found, vec!["Papers/attention notes.typ".to_string(), "Reading.md".to_string()]);
+    }
+
+    #[test]
+    fn a_source_property_naming_a_note_is_a_link_in_the_graph() {
+        let workspace = workspace_with(&[
+            ("Summary.typ", "#metadata((\n  source: \"Lecture.typ\",\n)) <properties>"),
+            ("Lecture.typ", "Notes."),
+        ]);
+
+        assert_eq!(links(&workspace), vec![("Summary.typ".to_string(), "Lecture.typ".to_string())]);
+    }
 }

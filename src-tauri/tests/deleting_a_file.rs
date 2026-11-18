@@ -88,4 +88,16 @@ mod deleting_a_file {
         assert_eq!(result, Err(NoteError::NotFound));
         assert!(trashed.is_empty());
     }
+
+    #[test]
+    fn deleting_a_pdf_sends_its_annotations_to_the_trash_too() {
+        let workspace = workspace_with(&["attention.pdf", "attention.annotations.json", "attention notes.typ"]);
+
+        let (result, trashed) = delete(&workspace, "attention.pdf");
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(trashed, vec![workspace.path().join("attention.pdf"), workspace.path().join("attention.annotations.json")]);
+        // (Notes about it are notes: they stay.)
+        assert!(workspace.path().join("attention notes.typ").exists());
+    }
 }

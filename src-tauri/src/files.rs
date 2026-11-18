@@ -22,6 +22,15 @@ pub struct FileEntry {
     pub children: Vec<FileEntry>,
 }
 
+/// A PDF's annotations are kept beside it: `attention.pdf` has `attention.annotations.json`.
+pub const ANNOTATIONS_SUFFIX: &str = ".annotations.json";
+
+/// The file keeping a PDF's annotations (its path relative to the workspace), if `file` is a PDF.
+pub fn annotations_of(file: &str) -> Option<String> {
+    let stem = file.strip_suffix(".pdf").or_else(|| file.strip_suffix(".PDF"))?;
+    Some(format!("{stem}{ANNOTATIONS_SUFFIX}"))
+}
+
 pub fn list_files(workspace: &Path) -> io::Result<Vec<FileEntry>> {
     list_folder(workspace, "")
 }
@@ -33,6 +42,10 @@ fn list_folder(folder: &Path, relative: &str) -> io::Result<Vec<FileEntry>> {
         let name = item.file_name().to_string_lossy().into_owned();
         // Hidden files, including the app's own `.marginalia` folder.
         if name.starts_with('.') {
+            continue;
+        }
+        // A PDF's annotations: kept with the PDF (renamed and deleted with it), not a file of their own.
+        if name.ends_with(ANNOTATIONS_SUFFIX) {
             continue;
         }
         let path = if relative.is_empty() { name.clone() } else { format!("{relative}/{name}") };

@@ -24,12 +24,14 @@ type Props = {
   reveal?: { line: number; column: number; length: number };
   /** A part of the note to go to (a link's anchor, after its #); gone to again for a new object. */
   goTo?: { part: string };
+  /** Called when the note's text is changed (typed in), the first time and after. */
+  onEdited?: (path: string) => void;
   /** Called when the part to go to isn't in the note. */
   onMissingPart?: (path: string, part: string) => void;
 };
 
 /** Loads one note and shows it in the editor. Saves what's waiting when it closes. */
-export function NotePane({ path, autosave, showPages, onMistakes, reveal, goTo, onMissingPart }: Props) {
+export function NotePane({ path, autosave, showPages, onMistakes, reveal, goTo, onEdited, onMissingPart }: Props) {
   const [problems, setProblems] = useState<api.Problem[]>([]);
   const [state, setState] = useState<State>({ status: "loading" });
   // The text as typed so far, for the pages (the editor itself keeps its own copy).
@@ -142,6 +144,7 @@ export function NotePane({ path, autosave, showPages, onMistakes, reveal, goTo, 
             onChange={(changed) => {
               autosave.change(path, changed);
               setText(changed);
+              onEdited?.(path);
             }}
           />
         </div>

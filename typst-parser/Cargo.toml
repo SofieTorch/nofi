@@ -1,0 +1,21 @@
+# Typst's own parser, compiled to WebAssembly for the editor (see src/editor/typstSyntax.ts).
+# Built by `npm run parser` (scripts/build-parser.mjs).
+[package]
+name = "typst-parser"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The same version as the typst crates in src-tauri, so the editor reads notes like the compiler.
+typst-syntax = "=0.15.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

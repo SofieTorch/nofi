@@ -39,6 +39,7 @@ export function getRecentWorkspaces(): Promise<Workspace[]> {
 export type MenuAction =
   | "new-note"
   | "new-markdown-note"
+  | "new-board"
   | "close-workspace"
   | "toggle-explorer-pinned"
   | "move-explorer-to-other-side"
@@ -164,6 +165,16 @@ export function restoreEmptyNote(path: string): Promise<void> {
 }
 
 /** Creates an empty note at a path (for a link to a note that doesn't exist yet); returns its path. */
+/** The notes that link to a file (like a PDF), maybe to a part of it. */
+export function notesLinkingTo(path: string): Promise<string[]> {
+  return invoke("notes_linking_to", { path });
+}
+
+/** Creates an empty board (whiteboard), `Untitled.canvas`, and returns its path. */
+export function createBoard(): Promise<string> {
+  return invoke("create_board");
+}
+
 export function createNoteAt(path: string): Promise<string> {
   return invoke("create_note_at", { path });
 }
@@ -223,7 +234,10 @@ export function noteLinks(): Promise<NoteLink[]> {
 export type EditorSettings = {
   /** Whether blocks show a handle in the margin to drag them around. */
   blockHandles: boolean;
+  /** What boards are drawn on: plain white (the default), or a grid like Miro's. */
+  boardBackground: BoardBackground;
 };
+export type BoardBackground = "plain" | "grid";
 
 export function getEditorSettings(): Promise<EditorSettings> {
   return invoke("get_editor_settings");

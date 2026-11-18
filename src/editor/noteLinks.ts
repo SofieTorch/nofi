@@ -19,6 +19,7 @@ import type { FileEntry } from "../api";
 import { fuzzyScore } from "../ui/fuzzy";
 import { openPdf } from "../workspace/pdf";
 import { findFormatting, type Format, noteFormat, type Range } from "./formatting";
+import { CARD_TYPE, type Dragged, writePart } from "../board/board";
 import { anchorFor, findPart, type Part, partMarks, partsOf } from "./linkParts";
 
 /** The note an editor shows (its path in the workspace): links start from its folder. */
@@ -59,8 +60,14 @@ export function registerNoteEditor(path: string, view: EditorView) {
   };
 }
 
+/** The workspace's notes (their paths). */
+export const workspaceNotes = () => workspaceFiles.filter((path) => noteFormat(path));
+
+/** Whether a note is open in an editor. */
+export const isOpenInEditor = (path: string) => openEditors.has(path);
+
 /** A note's text: as it is in its editor, if it's open. */
-const textOf = async (path: string) => openEditors.get(path)?.state.doc.toString() ?? (await api.readNote(path));
+export const textOf = async (path: string) => openEditors.get(path)?.state.doc.toString() ?? (await api.readNote(path));
 
 /** A PDF's number of pages (each PDF is opened once). */
 const pageCounts = new Map<string, Promise<number>>();
@@ -79,6 +86,21 @@ function pagesOf(path: string) {
     pageCounts.set(path, count);
   }
   return count;
+}
+
+/**
+ * Adds text at the end of a note: through its editor if it's open (so nothing typed is lost),
+ * otherwise to its file. `make` gets the note's text and says what to add.
+ */
+export async function appendToNote(path: string, make: (text: string) => string) {
+  const editor = openEditors.get(path);
+  if (editor) {
+    const end = editor.state.doc.length;
+    editor.dispatch({ changes: { from: end, insert: make(editor.state.doc.toString()) } });
+    return;
+  }
+  const text = await api.readNote(path);
+  await api.saveNote(path, text + make(text));
 }
 
 /** Copies a link to a part of a note (labelling it first if needed); it's pasted as a link. */
@@ -136,7 +158,7 @@ export function resolvePath(from: string, address: string, decode: boolean): str
 }
 
 /** Characters that mean something in Typst's [text], written as text. */
-const typstText = (text: string) => text.replace(/[\\[\]*_#$@<>`~]/g, (char) => `\\${char}`);
+export const typstText = (text: string) => text.replace(/[\\[\]*_#$@<>`~]/g, (char) => `\\${char}`);
 const markdownText = (text: string) => text.replace(/[\\[\]*_`]/g, (char) => `\\${char}`);
 
 /** A link to a file (`target`, a workspace path; maybe a `part` of it) from a note, showing the file's name. */
@@ -450,7 +472,7 @@ const continueWithFile = Prec.highest(
 );
 
 /** A Typst link's address: the quoted text in its settings, like `"Ideas.md"`. */
-const quotedAddress = (args = "") => /^\s*"((?:[^"\\]|\\.)*)"/.exec(args)?.[1].replace(/\\(.)/g, "$1") ?? null;
+export const quotedAddress = (args = "") => /^\s*"((?:[^"\\]|\\.)*)"/.exec(args)?.[1].replace(/\\(.)/g, "$1") ?? null;
 
 /**
  * Clicking a link follows it (not while editing that link: then it moves the cursor); with ⌘
@@ -533,6 +555,14 @@ async function describe(target: LinkTarget) {
   return `${path} › ${shown ?? part}`;
 }
 
+/** Follows an address written in a note (in a new pane, for ⌘-click); false if it goes nowhere. */
+export function followAddress(view: EditorView, address: string, format: Format, newPane: boolean) {
+  const target = openLink && targetOf(view, address, format);
+  if (!target) return false;
+  openLink!(target, newPane);
+  return true;
+}
+
 function followClicks(format: Format) {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
@@ -583,6 +613,14 @@ function followClicks(format: Format) {
       const into = event.relatedTarget instanceof Node ? event.relatedTarget : null;
       if (into && hovered.contains(into)) return false;
       hideTooltip();
+      return false;
+    },
+    // Selected text dragged out (to a board) carries the note and the text.
+    dragstart(event, view) {
+      const { from, to } = view.state.selection.main;
+      if (from === to || !event.dataTransfer) return false;
+      const dragged: Dragged = { file: view.state.facet(notePath), subpath: writePart({ quote: view.state.sliceDoc(from, to) }) };
+      event.dataTransfer.setData(CARD_TYPE, JSON.stringify(dragged));
       return false;
     },
     // A copied link (a workspace file's address with a part, like `Paper.typ#methods`) is pasted as a link.
@@ -648,10 +686,37 @@ const flashField = StateField.define<DecorationSet>({
  * highlighted for a moment. False if the note has no such part.
  */
 export function goToPart(view: EditorView, format: Format, anchor: string) {
+  // "end": the cursor at the end, to write there (under a new annotation).
+  if (anchor === "end") {
+    const end = view.state.doc.length;
+    view.dispatch({ selection: { anchor: end }, effects: EditorView.scrollIntoView(end, { y: "center" }) });
+    view.focus();
+    return true;
+  }
+  // "before=…": the cursor just before that text (the last time it's there), to write there.
+  if (anchor.startsWith("before=")) {
+    let wanted = anchor.slice(7);
+    try {
+      wanted = decodeURIComponent(wanted);
+    } catch {
+      // (Written as it is.)
+    }
+    const at = view.state.doc.toString().lastIndexOf(wanted);
+    if (at < 0 || !wanted) return false;
+    const line = view.state.doc.lineAt(at);
+    view.dispatch({
+      selection: { anchor: at },
+      effects: [EditorView.scrollIntoView(at, { y: "center" }), flash.of({ from: line.from, to: line.to })],
+    });
+    view.focus();
+    setTimeout(() => view.dom.isConnected && view.dispatch({ effects: flash.of(null) }), 1200);
+    return true;
+  }
   const found = findPart(view.state.doc.toString(), format, anchor);
   if (!found) return false;
   view.dispatch({
-    selection: { anchor: found.from },
+    // (Text from the note is selected; a heading or paragraph, the cursor goes to its start.)
+    selection: anchor.startsWith("quote=") ? { anchor: found.from, head: found.to } : { anchor: found.from },
     effects: [EditorView.scrollIntoView(found.from, { y: "center" }), flash.of(found)],
   });
   view.focus();

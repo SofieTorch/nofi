@@ -137,6 +137,18 @@ fn create_note(current: State<CurrentWorkspace>, format: Option<NoteFormat>) -> 
     notes::create_note(&current.path()?, format.unwrap_or_default()).map_err(|e| e.to_string())
 }
 
+/// The notes that link to a file (like a PDF, for its annotations).
+#[tauri::command]
+fn notes_linking_to(current: State<CurrentWorkspace>, path: String) -> Result<Vec<String>, String> {
+    Ok(links::notes_linking_to(&current.path()?, &path))
+}
+
+/// Creates an empty board (whiteboard) and returns its path relative to the workspace.
+#[tauri::command]
+fn create_board(current: State<CurrentWorkspace>) -> Result<String, String> {
+    notes::create_board(&current.path()?).map_err(|e| e.to_string())
+}
+
 /// Creates an empty note at a path (for a link to a note that doesn't exist yet) and returns it.
 #[tauri::command]
 fn create_note_at(current: State<CurrentWorkspace>, path: String) -> Result<String, NoteError> {
@@ -445,6 +457,8 @@ pub fn run() {
             save_explorer_layout,
             create_note,
             create_note_at,
+            create_board,
+            notes_linking_to,
             rename_note,
             read_note,
             save_note,

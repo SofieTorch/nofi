@@ -170,4 +170,25 @@ mod names_that_are_not_allowed {
         assert_eq!(error, RenameError::NotFound);
         assert_eq!(error.to_string(), "This note doesn't exist anymore.");
     }
+
+    #[test]
+    fn renaming_a_pdf_renames_its_annotations_with_it() {
+        let workspace = workspace_with(&["Papers/attention.pdf", "Papers/attention.annotations.json"]);
+
+        let renamed = rename(&workspace, "Papers/attention.pdf", "Attention 2017").unwrap();
+
+        assert_eq!(renamed, "Papers/Attention 2017.pdf");
+        assert!(exists(&workspace, "Papers/Attention 2017.annotations.json"));
+        assert!(!exists(&workspace, "Papers/attention.annotations.json"));
+    }
+
+    #[test]
+    fn a_pdf_isnt_renamed_over_another_pdfs_annotations() {
+        let workspace = workspace_with(&["attention.pdf", "attention.annotations.json", "other.annotations.json"]);
+
+        let error = rename(&workspace, "attention.pdf", "other").unwrap_err();
+
+        assert_eq!(error, RenameError::Taken("other".to_string()));
+        assert!(exists(&workspace, "attention.pdf"));
+    }
 }

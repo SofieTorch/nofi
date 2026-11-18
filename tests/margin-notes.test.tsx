@@ -62,6 +62,18 @@ describe("Footnotes in the margin", () => {
   });
 });
 
+describe("Links in footnotes", () => {
+  it("a footnote's link can be clicked, to follow it", async () => {
+    notes = { "Paper.typ": 'A claim#footnote[See #link("Other.typ")[the other note].].', "Other.typ": "Other text." };
+    vi.mocked(api.listFiles).mockResolvedValue(Object.keys(notes).map(file));
+    const editor = await openNote();
+
+    await userEvent.click(within(within(editor).getByRole("note", { name: "Footnote 1" })).getByText("the other note"));
+
+    expect(await screen.findByRole("textbox", { name: "Other.typ" })).toHaveTextContent("Other text.");
+  });
+});
+
 describe("Comments in the margin", () => {
   it("a comment's text is in the left margin, not in the text", async () => {
     const editor = await openNote();

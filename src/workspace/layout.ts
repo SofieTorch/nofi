@@ -4,11 +4,20 @@
 // of the same note would overwrite each other's changes. There are no empty panes (except the
 // window's only one): a pane is made by putting a tab at another's edge, and goes with its last
 // tab. Every change gives a new layout.
+// A tab can be a preview (like VS Code's): opening another file in its pane replaces it, instead
+// of adding a tab. It becomes an ordinary tab when it's kept (typed in, its tab double-clicked, moved).
 
-export type Tab = { kind: "note"; path: string } | { kind: "pdf"; path: string } | { kind: "graph" };
+export type Tab = ({ kind: "note"; path: string } | { kind: "pdf"; path: string } | { kind: "board"; path: string } | { kind: "graph" }) & {
+  preview?: boolean;
+};
 
-/** The tab a file opens in: a PDF in the reader, anything else as a note. */
-export const tabFor = (path: string): Tab => (path.toLowerCase().endsWith(".pdf") ? { kind: "pdf", path } : { kind: "note", path });
+/** The tab a file opens in: a PDF in the reader, a board (`.canvas`) as a board, anything else as a note. */
+export const tabFor = (path: string): Tab => {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".pdf")) return { kind: "pdf", path };
+  if (lower.endsWith(".canvas")) return { kind: "board", path };
+  return { kind: "note", path };
+};
 export type Group = { kind: "group"; id: string; tabs: Tab[]; active: number };
 export type Split = { kind: "split"; id: string; direction: "row" | "column"; children: Pane[]; sizes: number[] };
 export type Pane = Group | Split;
@@ -71,13 +80,18 @@ export const showTab = (layout: Layout, id: string, index: number): Layout =>
     id,
   );
 
-/** Opens a tab in the active pane, after the shown one; if it's open somewhere, shows it there. */
+/**
+ * Opens a tab in the active pane, after the shown one; if it's open somewhere, shows it there. A
+ * preview tab takes the place of the pane's preview, if it has one.
+ */
 export function openTab(layout: Layout, tab: Tab, into = layout.active): Layout {
   const found = findTab(layout, tab);
   if (found) return showTab(layout, found.group.id, found.index);
   const target = groups(layout).find((g) => g.id === into) ?? activeGroup(layout);
   return focusGroup(
     changeGroup(layout, target.id, (group) => {
+      const preview = tab.preview ? group.tabs.findIndex((t) => t.preview) : -1;
+      if (preview !== -1) return { ...group, tabs: group.tabs.map((t, i) => (i === preview ? tab : t)), active: preview };
       const at = group.tabs.length ? group.active + 1 : 0;
       return { ...group, tabs: [...group.tabs.slice(0, at), tab, ...group.tabs.slice(at)], active: at };
     }),
@@ -150,8 +164,10 @@ export type Drop = TabPlace | { group: string; side: Side };
 /** Moves a tab: to a place among a pane's tabs, or to a pane's edge (splitting it). */
 export function moveTab(layout: Layout, from: TabPlace, to: Drop): Layout {
   const sameGroup = to.group === from.group;
-  const { layout: taken, tab } = takeTab(layout, from.group, from.index);
-  if (!tab) return layout;
+  const { layout: taken, tab: moving } = takeTab(layout, from.group, from.index);
+  if (!moving) return layout;
+  // (A moved tab is kept.)
+  const tab: Tab = { ...moving, preview: false };
   let moved: Layout;
   if ("side" in to) {
     moved = split(taken, to.group, to.side, tab);
@@ -224,3 +240,13 @@ export function activeFile(layout: Layout): string | undefined {
   const tab = group.tabs[group.active];
   return tab && "path" in tab ? tab.path : undefined;
 }
+
+/** Keeps a preview tab: it becomes an ordinary tab. */
+export const keepTab = (layout: Layout, tab: Tab): Layout => {
+  const found = findTab(layout, tab);
+  if (!found?.group.tabs[found.index].preview) return layout;
+  return changeGroup(layout, found.group.id, (group) => ({
+    ...group,
+    tabs: group.tabs.map((t, i) => (i === found.index ? { ...t, preview: false } : t)),
+  }));
+};

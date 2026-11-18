@@ -13,6 +13,7 @@ import {
   emptyLayout,
   focusGroup,
   groups,
+  keepTab,
   type Layout,
   moveTab,
   openTab,
@@ -67,6 +68,31 @@ describe("Tabs", () => {
 
   it("the graph is a tab too", () => {
     expect(shape(openTab(open("A.typ"), graph))).toEqual([["A.typ", "[graph]"]]);
+  });
+});
+
+describe("Preview tabs", () => {
+  const preview = (path: string): Tab => ({ kind: "note", path, preview: true });
+
+  it("a preview takes the place of the pane's preview", () => {
+    const layout = openTab(openTab(open("A.typ"), preview("B.typ")), preview("C.typ"));
+
+    expect(shape(layout)).toEqual([["A.typ", "[C.typ]"]]);
+  });
+
+  it("a kept tab isn't replaced", () => {
+    const shown = openTab(open("A.typ"), preview("B.typ"));
+
+    expect(shape(openTab(keepTab(shown, note("B.typ")), preview("C.typ")))).toEqual([["A.typ", "B.typ", "[C.typ]"]]);
+  });
+
+  it("a tab that's moved is kept", () => {
+    const layout = openTab(open("A.typ"), preview("B.typ"));
+    const group = groups(layout)[0];
+
+    const moved = moveTab(layout, { group: group.id, index: 1 }, { group: group.id, index: 0 });
+
+    expect(groups(moved)[0].tabs[0].preview).toBe(false);
   });
 });
 

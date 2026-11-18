@@ -1,6 +1,6 @@
 import { mdiClose } from "@mdi/js";
 import { useEffect, useId, useRef } from "react";
-import type { EditorSettings } from "../api";
+import type { BoardBackground, EditorSettings } from "../api";
 import { IconButton } from "../ui/IconButton";
 
 type Props = {
@@ -46,6 +46,16 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           checked={settings.blockHandles}
           onChange={(blockHandles) => onChange({ ...settings, blockHandles })}
         />
+        <h3 className="mt-3 mb-1 text-xs font-medium tracking-wide text-neutral-500 uppercase">Boards</h3>
+        <Choice
+          label="Background"
+          options={[
+            { value: "plain", label: "Plain" },
+            { value: "grid", label: "Grid" },
+          ]}
+          value={settings.boardBackground}
+          onChange={(boardBackground) => onChange({ ...settings, boardBackground })}
+        />
       </div>
     </div>
   );
@@ -84,6 +94,41 @@ function Toggle({
           }`}
         />
       </button>
+    </div>
+  );
+}
+
+/** One of a few options, side by side (like a segmented control). */
+function Choice({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: BoardBackground; label: string }[];
+  value: BoardBackground;
+  onChange: (value: BoardBackground) => void;
+}) {
+  const id = useId();
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <div id={id} className="text-sm text-neutral-800">
+        {label}
+      </div>
+      <div role="radiogroup" aria-labelledby={id} className="flex rounded-md bg-neutral-100 p-0.5">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            role="radio"
+            aria-checked={option.value === value}
+            onClick={() => onChange(option.value)}
+            className={`rounded px-2.5 py-1 text-xs ${option.value === value ? "bg-white text-neutral-800 shadow-sm" : "text-neutral-500 hover:text-neutral-700"}`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

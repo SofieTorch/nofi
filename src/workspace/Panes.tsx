@@ -20,6 +20,7 @@ import {
   type Tab,
   type TabPlace,
   closeTab,
+  keepTab,
 } from "./layout";
 
 type Props = {
@@ -47,18 +48,25 @@ export function stopDragging() {
   dragging = null;
 }
 
+/** The file being dragged from the explorer, if one is. */
+export const draggedNote = () => (dragging && "note" in dragging ? dragging.note : null);
+
 /** Where a tab dropped on a pane's content goes: its edges split it, its middle adds it there. */
-function dropSide(element: HTMLElement, x: number, y: number): Side | "middle" {
+function dropSide(element: HTMLElement, x: number, y: number, edge = 0.25): Side | "middle" {
   const box = element.getBoundingClientRect();
   if (!box.width || !box.height) return "middle";
   const across = (x - box.left) / box.width;
   const down = (y - box.top) / box.height;
-  if (across < 0.25) return "left";
-  if (across > 0.75) return "right";
-  if (down < 0.25) return "up";
-  if (down > 0.75) return "down";
+  if (across < edge) return "left";
+  if (across > 1 - edge) return "right";
+  if (down < edge) return "up";
+  if (down > 1 - edge) return "down";
   return "middle";
 }
+
+/** A tab whose content takes files dropped on it (a board): only the pane's narrow edges split it. */
+const takesDrops = (tab: Tab | undefined) => tab?.kind === "board";
+const edgeFor = (tab: Tab | undefined) => (takesDrops(tab) ? 0.08 : 0.25);
 
 /**
  * The window's panes, like VS Code's: each has tabs (click to show, × or middle-click to close,
@@ -181,10 +189,12 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
                 role="tab"
                 aria-label={name}
                 aria-selected={shown}
+                aria-description={t.preview ? "Preview" : undefined}
                 title={title?.(t) ?? name}
                 draggable
                 tabIndex={shown ? 0 : -1}
                 onClick={() => onChange((current) => showTab(current, group.id, i))}
+                onDoubleClick={() => onChange((current) => keepTab(current, t))}
                 onAuxClick={(event) => event.button === 1 && onChange((current) => closeTab(current, group.id, i))}
                 onDragStart={(event) => {
                   dragging = { tab: { group: group.id, index: i } };
@@ -216,7 +226,7 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
                 {beforeTab === i + 1 && i === group.tabs.length - 1 && (
                   <span className="absolute inset-y-1 -right-0.5 w-0.5 rounded bg-sky-500" />
                 )}
-                <span className="truncate">{name}</span>
+                <span className={`truncate ${t.preview ? "italic" : ""}`}>{name}</span>
                 <button
                   aria-label={`Close ${name}`}
                   title="Close"
@@ -244,8 +254,11 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
         aria-label={tab ? label(tab) : "Empty pane"}
         onDragOver={(event) => {
           if (!dragging) return;
+          const side = group.tabs.length ? dropSide(panel.current!, event.clientX, event.clientY, edgeFor(tab)) : "middle";
+          // (A file dropped on a board, away from its edges, is the board's: it becomes a card.)
+          if (side === "middle" && takesDrops(tab) && "note" in dragging) return setDropAt(null);
           event.preventDefault();
-          setDropAt(group.tabs.length ? dropSide(panel.current!, event.clientX, event.clientY) : "middle");
+          setDropAt(side);
         }}
         // (Safari only lets a drop happen where the drag's arrival is accepted too.)
         onDragEnter={(event) => dragging && event.preventDefault()}
@@ -254,7 +267,8 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
         }}
         onDrop={(event) => {
           event.preventDefault();
-          const side = dropSide(panel.current!, event.clientX, event.clientY);
+          const side = dropSide(panel.current!, event.clientX, event.clientY, edgeFor(tab));
+          if (side === "middle" && takesDrops(tab) && dragging && "note" in dragging) return;
           drop(side === "middle" ? { group: group.id, index: group.tabs.length } : { group: group.id, side });
         }}
         className="relative min-h-0 flex-1"

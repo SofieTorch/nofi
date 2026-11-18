@@ -61,7 +61,32 @@ describe("Typst notes", () => {
     });
 
     it("a backslash keeps a star as a plain star", () => {
-      expect(formatted("\\*not bold\\*")).toEqual([]);
+      expect(formatted("\\*not bold\\*")).toEqual(["escape: \\*", "escape: \\*"]);
+    });
+
+    it("code like #metadata(…) isn't text: underscores in it don't start italics", () => {
+      const text = '#metadata((\nsource: "Rust_08_Ownership.pdf"\n)) <properties>\nNotes on #link("Rust_08_Ownership.pdf")[Rust 08 Ownership].';
+      expect(formatted(text)).toEqual(['link: #link("Rust_08_Ownership.pdf")[Rust 08 Ownership]']);
+    });
+
+    it("an underscore before a link doesn't pair with one in its address", () => {
+      expect(formatted('my_var: #link("a_b.pdf")[a b]')).toEqual(['link: #link("a_b.pdf")[a b]']);
+    });
+
+    it("something not closed yet is just text, and the rest of the note keeps its formatting", () => {
+      expect(formatted("a $x and *b*\n\n#highlight[c *d* `e\n\n/* f\n\n_g_")).toEqual(["bold: *b*", "bold: *d*", "italic: _g_"]);
+    });
+
+    it("a lone star inside a style doesn't undo the style", () => {
+      expect(formatted("#highlight[2 * 3]")).toEqual(["highlight: #highlight[2 * 3]"]);
+    });
+
+    it("text in the brackets of other code is formatted", () => {
+      expect(formatted("#figure(caption: [a *b*])[c _d_]")).toEqual(["bold: *b*", "italic: _d_"]);
+    });
+
+    it("so does a function's name", () => {
+      expect(formatted("#my_fn and _this_")).toEqual(["italic: _this_"]);
     });
 
     it("`backticks` show code, and nothing inside them is formatted", () => {
@@ -134,8 +159,8 @@ describe("Typst notes", () => {
       ]);
     });
 
-    it("an inline quote or a block without a background isn't a block quote or callout", () => {
-      expect(formatted("#quote[inline] #block(width: 50%)[box]")).toEqual([]);
+    it("an inline quote is a quotation, not a block quote; a block without a background isn't a callout", () => {
+      expect(formatted("#quote[inline] #block(width: 50%)[box]")).toEqual(["quotation: #quote[inline]"]);
     });
 
     it("footnotes are formatted", () => {
@@ -202,8 +227,8 @@ describe("Typst notes", () => {
       ]);
     });
 
-    it("maths, code and comments stay within their line", () => {
-      expect(formatted("$a\nb$ `c\nd` // e\nf")).toEqual(["comment: // e"]);
+    it("maths and code can go on over several lines, like in Typst; comments end with their line", () => {
+      expect(formatted("$a\nb$ `c\nd` // e\nf")).toEqual(["math: $a\nb$", "code: `c\nd`", "comment: // e"]);
     });
 
     it("hides a multi-line style's syntax unless the cursor is somewhere in it", () => {
@@ -245,6 +270,16 @@ describe("Typst notes", () => {
       expect(shown("|Read #highlight[this] now")).toBe("Read this now");
       expect(shown("Read #highlight[th|is] now")).toBe("Read #highlight[this] now");
       expect(shown("|Note: #highlight(fill: aqua)[key]")).toBe("Note: key");
+    });
+
+    it("hides an inline quote's syntax unless the cursor is in it (it's shown in quotation marks)", () => {
+      expect(shown("|See #quote[the passage] p. 3")).toBe("See the passage p. 3");
+      expect(shown("See #quote[the pas|sage] p. 3")).toBe("See #quote[the passage] p. 3");
+    });
+
+    it("hides a backslash before a character unless the cursor is next to it", () => {
+      expect(shown("|costs \\$5 \\* 2")).toBe("costs $5 * 2");
+      expect(shown("costs \\|$5")).toBe("costs \\$5");
     });
 
     it("hides code's backticks when the cursor is elsewhere", () => {
