@@ -5,7 +5,7 @@ import { type EditorState, Prec, StateField } from "@codemirror/state";
 import { EditorView, keymap, showTooltip, type Tooltip } from "@codemirror/view";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import type { Format } from "./formatting";
+import { findFormatting, type Format } from "./formatting";
 import { FormatToolbar } from "./FormatToolbar";
 import { availableStyles, indent, type Style, toggleStyle } from "./styles";
 
@@ -19,10 +19,19 @@ const SHORTCUTS: Partial<Record<Style, string>> = {
   // No shortcut for maths: ⌘M minimises the window on a Mac.
 };
 
+/** Whether a selection is all inside code (a code block, or inline code): code has no styles. */
+function inCode(state: EditorState, format: Format, from: number, to: number) {
+  return findFormatting(state.doc.toString(), format).some(
+    (span) => (span.kind === "codeblock" || span.kind === "code") && span.from <= from && to <= span.to,
+  );
+}
+
 /** Adds or removes a style on the selection. False if there's nothing selected (or it can't). */
 function applyStyle(view: EditorView, format: Format, style: Style) {
   const { from, to } = view.state.selection.main;
   if (from === to) return false;
+  // (In code, the shortcut does nothing, rather than reaching the browser's own bold or italic.)
+  if (inCode(view.state, format, from, to)) return true;
   const edit = toggleStyle(view.state.doc.toString(), format, { from, to }, style);
   if (!edit) return false;
   view.dispatch({
@@ -35,7 +44,7 @@ function applyStyle(view: EditorView, format: Format, style: Style) {
 
 function toolbarFor(state: EditorState, format: Format): Tooltip | null {
   const { from, to } = state.selection.main;
-  if (from === to) return null;
+  if (from === to || inCode(state, format, from, to)) return null;
   return {
     pos: from,
     above: true,

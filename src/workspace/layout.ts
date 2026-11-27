@@ -14,7 +14,8 @@ export type Tab = ({ kind: "note"; path: string } | { kind: "pdf"; path: string 
 /** The tab a file opens in: a PDF in the reader, a board (`.canvas`) as a board, anything else as a note. */
 export const tabFor = (path: string): Tab => {
   const lower = path.toLowerCase();
-  if (lower.endsWith(".pdf")) return { kind: "pdf", path };
+  // (A Zotero paper's PDF opens in the reader too: `zotero:<its id>`.)
+  if (lower.endsWith(".pdf") || path.startsWith("zotero:")) return { kind: "pdf", path };
   if (lower.endsWith(".canvas")) return { kind: "board", path };
   return { kind: "note", path };
 };
@@ -129,6 +130,21 @@ export function closeTab(layout: Layout, id: string, index: number): Layout {
   const taken = takeTab(layout, id, index).layout;
   const group = groups(taken).find((g) => g.id === id);
   return group && group.tabs.length === 0 ? removeGroup(taken, id) : taken;
+}
+
+/**
+ * Closes some of a pane's tabs (those `close` says), like VS Code's Close Others, Close to the
+ * Right…: the tab right-clicked (`index`) is shown if the shown one closes. A pane left without
+ * tabs closes too, unless it's the only one.
+ */
+export function closeTabs(layout: Layout, id: string, index: number, close: (i: number) => boolean): Layout {
+  const group = groups(layout).find((g) => g.id === id);
+  if (!group) return layout;
+  const shown = close(group.active) ? index : group.active;
+  const kept = group.tabs.map((tab, i) => ({ tab, i })).filter(({ i }) => !close(i));
+  if (!kept.length && groups(layout).length > 1) return removeGroup(layout, id);
+  const active = Math.max(0, kept.findIndex(({ i }) => i === shown));
+  return { ...changeGroup(layout, id, (g) => ({ ...g, tabs: kept.map(({ tab }) => tab), active })), active: id };
 }
 
 /**

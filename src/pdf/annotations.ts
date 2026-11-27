@@ -2,6 +2,8 @@
 //
 // Annotations are marks on the PDF's pages: highlighted text, a note at a spot, an area. They're
 // kept in a file beside the PDF, `attention.annotations.json` (renamed and deleted with it).
+// A Zotero paper's (`zotero:<paper id>`) are kept in the workspace's hidden folder instead (see
+// tests/zotero-notes.test.tsx).
 //
 // Notes about a part of the PDF are paragraphs in notes citing that part with a link
 // (`attention.pdf#page=3&quote=…`, `&point=x,y`, `&area=x,y,w,h`), usually in a footnote. Those
@@ -13,7 +15,7 @@ import * as api from "../api";
 import { newId, type Part, readPart, writePart } from "../board/board";
 import { findBlocks } from "../editor/blocks";
 import { findFormatting, type Format, noteFormat } from "../editor/formatting";
-import { appendToNote, isOpenInEditor, partOf, quotedAddress, relativePath, resolvePath, textOf, typstText } from "../editor/noteLinks";
+import { appendToNote, editNote, isOpenInEditor, partOf, quotedAddress, relativePath, resolvePath, textOf, typstText } from "../editor/noteLinks";
 import { findPropertiesBlock } from "../editor/properties";
 import type { PdfInfo } from "../workspace/pdf";
 import type { Choice } from "./NotePicker";
@@ -31,13 +33,20 @@ export type Annotation =
   | (Mark & { type: "area"; x: number; y: number; width: number; height: number });
 export type NewAnnotation = Annotation extends infer A ? (A extends Annotation ? Omit<A, "id" | "colour"> & { colour?: Colour } : never) : never;
 
-/** The file keeping a PDF's annotations, beside it. */
-export const annotationsFile = (pdf: string) => `${pdf.replace(/\.pdf$/i, "")}.annotations.json`;
+/** A Zotero paper's PDF (`zotero:<paper id>`), read from Zotero. */
+export const isZoteroPaper = (pdf: string) => pdf.startsWith("zotero:");
+
+/**
+ * The file keeping a PDF's annotations: beside it, or for a Zotero paper in the workspace's
+ * hidden folder (`.marginalia/zotero/<paper id>.annotations.json`).
+ */
+export const annotationsFile = (pdf: string) =>
+  isZoteroPaper(pdf) ? `.marginalia/zotero/${pdf.slice("zotero:".length)}.annotations.json` : `${pdf.replace(/\.pdf$/i, "")}.annotations.json`;
 
 type File = { pdf: string; annotations: Annotation[] } & Record<string, unknown>;
 
 async function readFile(pdf: string): Promise<File> {
-  const empty = { pdf: pdf.split("/").pop()!, annotations: [] };
+  const empty = { pdf: isZoteroPaper(pdf) ? pdf : pdf.split("/").pop()!, annotations: [] };
   const text = await api.readNote(annotationsFile(pdf)).catch(() => null);
   if (!text?.trim()) return empty;
   try {
@@ -71,6 +80,40 @@ export const recolourAnnotation = (pdf: string, id: string, colour: Colour) =>
   changeAnnotations(pdf, (all) => all.map((a) => (a.id === id ? { ...a, colour } : a)));
 
 export const removeAnnotation = (pdf: string, id: string) => changeAnnotations(pdf, (all) => all.filter((a) => a.id !== id));
+
+/** Moves an annotation (a note at a spot, or an area) to a new place on its page. */
+export const moveAnnotation = (pdf: string, id: string, to: { x: number; y: number }) =>
+  changeAnnotations(pdf, (all) => all.map((a) => (a.id === id && a.type !== "highlight" ? { ...a, ...to } : a)));
+
+/**
+ * Makes the links citing a spot of a PDF (its page and point) cite another spot instead, in every
+ * note linking to the PDF (open notes are changed in their editor). Other links are left alone.
+ */
+export async function moveCitedSpot(pdf: string, page: number, from: { x: number; y: number }, to: { x: number; y: number }) {
+  const paths = await api.notesLinkingTo(pdf).catch(() => [] as string[]);
+  const point = `point=${Math.round(to.x)},${Math.round(to.y)}`;
+  for (const path of paths) {
+    const format = noteFormat(path);
+    if (!format) continue;
+    await editNote(path, (text) => {
+      const edits: { from: number; to: number; insert: string }[] = [];
+      for (const span of findFormatting(text, format)) {
+        if (span.kind !== "link") continue;
+        const address = addressOf(span.args, format);
+        if (!address || resolvePath(path, address, format === "markdown") !== pdf) continue;
+        const fragment = partOf(address, format === "markdown");
+        const part = readPart(fragment ? `#${fragment}` : "");
+        if (part.page !== page || part.point?.x !== from.x || part.point?.y !== from.y) continue;
+        // (The point as written in the link: replaced where it is.)
+        const written = /point=(-?[\d.]+),(-?[\d.]+)/.exec(text.slice(span.from, span.to));
+        if (!written) continue;
+        const at = span.from + written.index;
+        edits.push({ from: at, to: at + written[0].length, insert: point });
+      }
+      return edits;
+    });
+  }
+}
 
 /** The part of the PDF an annotation marks, as a link's part says it. */
 export function partOfAnnotation(annotation: Annotation | NewAnnotation): Part {
@@ -203,13 +246,24 @@ const nameOf = (path: string) => stemOf(path).replace(/_+/g, " ").trim() || stem
 const stemOf = (path: string) => path.split("/").pop()!.replace(/\.[^.]+$/, "");
 const folderOf = (path: string) => path.split("/").slice(0, -1);
 
+/** Its authors, short: "Devlin", "Burns and Oppenheimer", "Vaswani et al.". */
+export function shortAuthors(authors: string[]) {
+  if (authors.length > 2) return `${authors[0]} et al.`;
+  return authors.join(" and ");
+}
+
+/** How a PDF is called in citations: a Zotero paper by its authors and year, others by their name. */
+const citedAs = (pdf: string, info: PdfInfo) =>
+  (isZoteroPaper(pdf) && [shortAuthors(info.authors ?? []), info.year].filter(Boolean).join(", ")) || nameOf(pdf);
+
 /**
- * Makes a PDF's source note beside it (`attention notes.typ`, or with a number if that's taken),
- * with the paper's details as properties (its `source` property links it to the PDF). Returns its path.
+ * Makes a PDF's source note (at `at`, else beside it: `attention notes.typ`, or with a number if
+ * that's taken), with the paper's details as properties (its `source` property links it to the
+ * PDF). Returns its path.
  */
-async function makeSourceNote(pdf: string, info: PdfInfo, taken: (path: string) => Promise<boolean>) {
-  let path = [...folderOf(pdf), `${stemOf(pdf)} notes.typ`].join("/");
-  for (let n = 2; await taken(path); n++) path = [...folderOf(pdf), `${stemOf(pdf)} notes ${n}.typ`].join("/");
+async function makeSourceNote(pdf: string, info: PdfInfo, taken: (path: string) => Promise<boolean>, at?: string) {
+  let path = at ?? [...folderOf(pdf), `${stemOf(pdf)} notes.typ`].join("/");
+  if (!at) for (let n = 2; await taken(path); n++) path = [...folderOf(pdf), `${stemOf(pdf)} notes ${n}.typ`].join("/");
   await api.createNoteAt(path);
   const address = relativePath(path, pdf);
   const properties: api.Property[] = [{ key: "source", value: { type: "text", value: address }, raw: null }];
@@ -228,16 +282,17 @@ async function makeSourceNote(pdf: string, info: PdfInfo, taken: (path: string) 
  * and where that paragraph is (a part, to open the note there).
  */
 export async function addNote(pdf: string, part: Part, info: () => Promise<PdfInfo>, taken: (path: string) => Promise<boolean>, into?: Choice) {
+  const details = await info().catch((): PdfInfo => ({}));
   const source =
     into && "note" in into
       ? into.note
-      : ((!into && (await loadCitations(pdf)).sources[0]) || (await makeSourceNote(pdf, await info().catch(() => ({})), taken)));
+      : ((!into && (await loadCitations(pdf)).sources[0]) || (await makeSourceNote(pdf, details, taken, into && "at" in into ? into.at : undefined)));
   const format = noteFormat(source) ?? "typst";
   const address = `${relativePath(source, pdf)}${writePart(part)}`;
   const line =
     format === "markdown"
-      ? `[${nameOf(pdf)}, p. ${part.page}](${address.split("#")[0].split("/").map(encodeURIComponent).join("/")}${address.includes("#") ? `#${address.split("#").slice(1).join("#")}` : ""})`
-      : `#footnote[#link("${address.replace(/[\\"]/g, (c) => `\\${c}`)}")[${typstText(nameOf(pdf))}, p. ${part.page}]]`;
+      ? `[${citedAs(pdf, details)}, p. ${part.page}](${isZoteroPaper(pdf) ? address.split("#")[0] : address.split("#")[0].split("/").map(encodeURIComponent).join("/")}${address.includes("#") ? `#${address.split("#").slice(1).join("#")}` : ""})`
+      : `#footnote[#link("${address.replace(/[\\"]/g, (c) => `\\${c}`)}")[${typstText(citedAs(pdf, details))}, p. ${part.page}]]`;
   await appendToNote(source, (text) => `${text.trim() ? (text.endsWith("\n\n") ? "" : text.endsWith("\n") ? "\n" : "\n\n") : ""}${line}\n`);
   return { note: source, at: `before=${encodeURIComponent(line)}` };
 }

@@ -27,7 +27,7 @@ describe("Choosing a workspace folder", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Research Notes" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Research Notes", hidden: true })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /choose a folder/i })).not.toBeInTheDocument();
   });
 
@@ -47,7 +47,7 @@ describe("Choosing a workspace folder", () => {
     await userEvent.click(await chooseFolderButton());
 
     expect(api.openWorkspace).toHaveBeenCalledWith(researchNotes.path);
-    expect(await screen.findByRole("heading", { name: "Research Notes" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Research Notes", hidden: true })).toBeInTheDocument();
   });
 
   it("keeps asking for a folder if the user cancels the folder picker", async () => {
@@ -110,7 +110,7 @@ describe("Recent workspaces in the picker", () => {
 
     expect(api.pickFolder).not.toHaveBeenCalled();
     expect(api.openWorkspace).toHaveBeenCalledWith(researchNotes.path);
-    expect(await screen.findByRole("heading", { name: "Research Notes" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Research Notes", hidden: true })).toBeInTheDocument();
   });
 
   it("explains why a recent workspace can't be opened, e.g. if it was moved meanwhile", async () => {

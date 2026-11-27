@@ -3,12 +3,14 @@ import { useEffect, useId, useRef } from "react";
 type Props = {
   /** The file's name, with its extension. */
   name: string;
+  /** For a folder: how many files are in it (they go too). */
+  files?: number;
   onDelete: () => void;
   onCancel: () => void;
 };
 
-/** Asks before deleting a file. Cancel is the safe choice, so it has the focus. */
-export function ConfirmDelete({ name, onDelete, onCancel }: Props) {
+/** Asks before deleting a file (or a folder with files in it). Cancel is the safe choice, so it has the focus. */
+export function ConfirmDelete({ name, files, onDelete, onCancel }: Props) {
   const title = useId();
   const description = useId();
   const cancel = useRef<HTMLButtonElement>(null);
@@ -36,7 +38,9 @@ export function ConfirmDelete({ name, onDelete, onCancel }: Props) {
           Delete “{name}”?
         </h2>
         <p id={description} className="mt-1 text-sm text-neutral-600">
-          It will be moved to the Trash, where you can still get it back.
+          {files === undefined
+            ? "It will be moved to the Trash, where you can still get it back."
+            : `It and the ${files} ${files === 1 ? "file" : "files"} in it will be moved to the Trash, where you can still get them back.`}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button

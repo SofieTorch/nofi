@@ -15,7 +15,7 @@
 // the rest of the note is the note's own), from the source note and from other notes.
 
 import { EditorView } from "@codemirror/view";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../src/api";
@@ -98,7 +98,8 @@ async function select(page: HTMLElement, text: string) {
 }
 
 const bar = () => screen.findByRole("toolbar", { name: "Selected text" });
-const margin = () => screen.findByRole("complementary", { name: "Notes on this PDF" });
+// (It comes once the notes are read and the pages laid out: a while, when the computer is busy.)
+const margin = () => screen.findByRole("complementary", { name: "Notes on this PDF" }, { timeout: 4000 });
 const saved = () => JSON.parse(notes[ANNOTATIONS]).annotations;
 
 /** Chooses the note a new note goes in, when asked. */
@@ -438,6 +439,113 @@ describe("Adding a note", () => {
   });
 });
 
+// A note's mark on a page (a note at a spot): hovering it shows the note citing it; dragging it
+// moves it, and the links citing it in notes follow.
+describe("A note's mark", () => {
+  const A_THOUGHT = `${SOURCE}\nA thought about the model.#footnote[#link("attention.pdf#page=3&point=120,300")[attention, p. 3]]\n`;
+  const withAMark = () => {
+    notes[ANNOTATIONS] = JSON.stringify({ pdf: "attention.pdf", annotations: [{ id: "n1", type: "note", page: 3, x: 120, y: 300, colour: "yellow" }] });
+    notes["Papers/attention notes.typ"] = A_THOUGHT;
+  };
+  const mark = async (page: HTMLElement) => within(page).findByRole("button", { name: "Note on page 3" });
+  /** Drags something by (dx, dy) pixels, as the mouse does. */
+  function dragBy(element: HTMLElement, dx: number, dy: number) {
+    fireEvent.pointerDown(element, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 100 + dx / 2, clientY: 100 + dy / 2, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 100 + dx, clientY: 100 + dy, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 100 + dx, clientY: 100 + dy, pointerId: 1 });
+  }
+  /** How many pixels a point of the page is drawn as (from where the mark is drawn). */
+  const scaleOf = (button: HTMLElement) => Number.parseFloat(button.style.left) / 120;
+
+  it("hovering it shows a preview of the note citing it: the paragraph, and which note", async () => {
+    withAMark();
+    const page = await openPdf();
+
+    await userEvent.hover(await mark(page));
+
+    const preview = await screen.findByRole("tooltip");
+    expect(preview).toHaveTextContent("A thought about the model.");
+    expect(preview).toHaveTextContent("attention notes");
+  });
+
+  it("the preview goes when the mouse leaves", async () => {
+    withAMark();
+    const page = await openPdf();
+    await userEvent.hover(await mark(page));
+    await screen.findByRole("tooltip");
+
+    await userEvent.unhover(await mark(page));
+
+    await vi.waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+  });
+
+  it("dragging it moves it on the page, and its new place is saved", async () => {
+    withAMark();
+    const button = await mark(await openPdf());
+    const scale = scaleOf(button);
+
+    dragBy(button, 40, -20);
+
+    const x = Math.round(120 + 40 / scale);
+    const y = Math.round(300 - 20 / scale);
+    await vi.waitFor(() => expect(saved()).toEqual([expect.objectContaining({ id: "n1", type: "note", page: 3, x, y })]));
+    expect(Number.parseFloat(button.style.left)).toBeCloseTo(x * scale, 0);
+  });
+
+  it("the notes citing it are changed to cite its new place", async () => {
+    withAMark();
+    notes["Ideas.typ"] = `See #link("Papers/attention.pdf#page=3&point=120,300")[this spot].`;
+    const button = await mark(await openPdf());
+    const scale = scaleOf(button);
+
+    dragBy(button, 40, -20);
+
+    const point = `point=${Math.round(120 + 40 / scale)},${Math.round(300 - 20 / scale)}`;
+    await vi.waitFor(() => expect(notes["Papers/attention notes.typ"]).toContain(`attention.pdf#page=3&${point}`));
+    expect(notes["Papers/attention notes.typ"]).not.toContain("point=120,300");
+    expect(notes["Ideas.typ"]).toContain(`Papers/attention.pdf#page=3&${point}`);
+  });
+
+  it("other links to the PDF are left as they were", async () => {
+    withAMark();
+    notes["Ideas.typ"] = `#link("Papers/attention.pdf#page=3&point=10,10")[another spot] and #link("Papers/attention.pdf#page=2&point=120,300")[page 2].`;
+    const button = await mark(await openPdf());
+
+    dragBy(button, 40, -20);
+
+    await vi.waitFor(() => expect(notes["Papers/attention notes.typ"]).not.toContain("point=120,300"));
+    expect(notes["Ideas.typ"]).toContain("page=3&point=10,10");
+    expect(notes["Ideas.typ"]).toContain("page=2&point=120,300");
+  });
+
+  it("a note open in the editor is changed there, keeping what's typed", async () => {
+    withAMark();
+    const page = await openPdf();
+    await userEvent.click(await mark(page));
+    const editor = await screen.findByRole("textbox", { name: "attention notes.typ" });
+    const view = EditorView.findFromDOM(editor)!;
+    view.dispatch({ changes: { from: view.state.doc.length, insert: "Typed, not saved." } });
+    const button = await mark(await screen.findByRole("img", { name: "Page 3" }));
+
+    dragBy(button, 40, 0);
+
+    await vi.waitFor(() => expect(view.state.doc.toString()).not.toContain("point=120,300"));
+    expect(view.state.doc.toString()).toContain("Typed, not saved.");
+  });
+
+  it("a little wobble while clicking doesn't move it: the click opens its note", async () => {
+    withAMark();
+    const button = await mark(await openPdf());
+
+    dragBy(button, 2, 1);
+    await userEvent.click(button);
+
+    expect(await sourceNoteWithCursor()).toContain("|A thought about the model.");
+    expect(saved()[0]).toMatchObject({ x: 120, y: 300 });
+  });
+});
+
 describe("The margin", () => {
   it("shows the paragraph citing a part next to it, without the footnote", async () => {
     notes["Papers/attention notes.typ"] = SOURCE;
@@ -559,6 +667,73 @@ describe("The margin", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(screen.queryByRole("complementary", { name: "Notes on this PDF" })).not.toBeInTheDocument();
+  });
+});
+
+// A switch on the PDF's toolbar hides the margin (and shows it again); the marks on the pages stay.
+// It's remembered while the app is open, for every PDF.
+describe("Hiding the margin", () => {
+  const marginSwitch = () => screen.getByRole("button", { name: "Show notes in the margin" });
+
+  it("the toolbar's switch hides the notes in the margin, and shows them again", async () => {
+    notes["Papers/attention notes.typ"] = SOURCE;
+    await openPdf();
+    await within(await margin()).findByRole("button", { name: /slow to train/ });
+    expect(marginSwitch()).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(marginSwitch());
+    expect(screen.queryByRole("complementary", { name: "Notes on this PDF" })).not.toBeInTheDocument();
+    expect(marginSwitch()).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(marginSwitch());
+    expect(await within(await margin()).findByRole("button", { name: /slow to train/ })).toBeInTheDocument();
+  });
+
+  it("while it's hidden, the switch for other notes' mentions goes too", async () => {
+    notes["Papers/attention notes.typ"] = SOURCE;
+    notes["Ideas.typ"] = `Compare with RNNs: #link("Papers/attention.pdf#page=3&quote=transduction%20models")[attention].`;
+    await openPdf();
+    await within(await margin()).findByRole("button", { name: /Ideas/ });
+
+    await userEvent.click(marginSwitch());
+
+    expect(screen.queryByRole("button", { name: "Show mentions from other notes" })).not.toBeInTheDocument();
+    await userEvent.click(marginSwitch()); // (Shown again, for the tests after: it's remembered.)
+  });
+
+  it("the cited passages stay underlined on the pages", async () => {
+    notes["Papers/attention notes.typ"] = SOURCE;
+    await openPdf();
+    await within(await margin()).findByRole("button", { name: /slow to train/ });
+    await vi.waitFor(() => expect(document.querySelectorAll("[data-cited]").length).toBeGreaterThan(0));
+    const underlined = document.querySelectorAll("[data-cited]").length;
+
+    await userEvent.click(marginSwitch());
+
+    expect(document.querySelectorAll("[data-cited]").length).toBe(underlined);
+    await userEvent.click(marginSwitch()); // (Shown again, for the tests after: it's remembered.)
+  });
+
+  it("a PDF opened later has it hidden too", async () => {
+    notes["Papers/attention notes.typ"] = SOURCE;
+    await openPdf();
+    await within(await margin()).findByRole("button", { name: /slow to train/ });
+    await userEvent.click(marginSwitch());
+    cleanup();
+
+    await openPdf();
+    await screen.findByRole("toolbar", { name: "PDF" });
+
+    await vi.waitFor(() => expect(marginSwitch()).toHaveAttribute("aria-pressed", "false"));
+    expect(screen.queryByRole("complementary", { name: "Notes on this PDF" })).not.toBeInTheDocument();
+    await userEvent.click(marginSwitch()); // (Shown again, for the tests after: it's remembered.)
+  });
+
+  it("isn't there when no note cites the PDF", async () => {
+    await openPdf();
+    await screen.findByRole("toolbar", { name: "PDF" });
+
+    expect(screen.queryByRole("button", { name: "Show notes in the margin" })).not.toBeInTheDocument();
   });
 });
 

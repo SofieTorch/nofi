@@ -13,6 +13,7 @@ import {
 import { mdiCommentTextOutline } from "@mdi/js";
 import { cssColour } from "./colours";
 import { drawnMaths, findFormatting, hiddenMarkers, isBeingEdited, type Format, type Span } from "./formatting";
+import { listIndents, listTheme } from "./listIndents";
 import { drawnPicture, drawPicture, type MathsPicture } from "./mathsPictures";
 import { followAddress, quotedAddress } from "./noteLinks";
 
@@ -358,6 +359,7 @@ function decorate(view: EditorView, format: Format): DecorationSet {
       decorations.push((isHidden(m) ? hide : marker).range(m.from, m.to));
     }
   }
+  decorations.push(...listIndents(view.state.doc, spans));
   return Decoration.set(decorations, true);
 }
 
@@ -489,6 +491,7 @@ const theme = EditorView.theme({
   ".cm-heading-2": { fontSize: "1.4em" },
   ".cm-heading-3": { fontSize: "1.2em" },
   ".cm-marker": { color: "#a3a3a3" },
+  ...listTheme,
   ".cm-heading .cm-marker": { fontWeight: "400" },
   ".cm-inline-code, .cm-math": {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",

@@ -451,10 +451,10 @@
       "after": "= «Title»"
     },
     {
-      "name": "a list item is nested deeper",
-      "before": "- «item»",
+      "name": "a list item is nested deeper, under the item above",
+      "before": "- first\n- «item»",
       "indent": "in",
-      "after": "  - «item»"
+      "after": "- first\n  - «item»"
     },
     {
       "name": "a nested list item comes back out",
@@ -588,10 +588,10 @@
       "after": "«wise»"
     },
     {
-      "name": "a list item is nested deeper",
-      "before": "- «item»",
+      "name": "a list item is nested deeper, under the item above",
+      "before": "- first\n- «item»",
       "indent": "in",
-      "after": "  - «item»"
+      "after": "- first\n  - «item»"
     },
     {
       "name": "highlight with double equals, like Obsidian",

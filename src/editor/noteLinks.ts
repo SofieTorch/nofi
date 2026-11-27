@@ -41,6 +41,11 @@ export function setWorkspaceNotes(entries: FileEntry[]) {
   workspaceFiles = [...files.filter((path) => noteFormat(path)), ...files.filter((path) => !noteFormat(path))];
 }
 
+/** Follows a link from outside a note (a PDF's page): a file opens, a website in the browser. */
+export function followLinkTarget(target: LinkTarget, newPane = false) {
+  openLink?.(target, newPane);
+}
+
 export function setNoteLinkOpener(open: ((target: LinkTarget, newPane: boolean) => void) | null) {
   openLink = open;
 }
@@ -103,6 +108,26 @@ export async function appendToNote(path: string, make: (text: string) => string)
   await api.saveNote(path, text + make(text));
 }
 
+/**
+ * Changes parts of a note: through its editor if it's open (so nothing typed is lost), otherwise
+ * in its file. `edits` gets the note's text and says what to replace (none: nothing changes).
+ */
+export async function editNote(path: string, edits: (text: string) => { from: number; to: number; insert: string }[]) {
+  const editor = openEditors.get(path);
+  if (editor) {
+    const changes = edits(editor.state.doc.toString());
+    if (changes.length) editor.dispatch({ changes });
+    return;
+  }
+  const text = await api.readNote(path);
+  const changes = edits(text).sort((a, b) => b.from - a.from);
+  if (!changes.length) return;
+  await api.saveNote(
+    path,
+    changes.reduce((result, change) => result.slice(0, change.from) + change.insert + result.slice(change.to), text),
+  );
+}
+
 /** Copies a link to a part of a note (labelling it first if needed); it's pasted as a link. */
 export function copyLinkTo(view: EditorView, format: Format, part: Range & { kind: Part["kind"] }) {
   const { anchor, change } = anchorFor(view.state.doc.toString(), format, part);
@@ -124,6 +149,7 @@ const stemOf = (path: string) => nameOf(path).replace(/\.[^.]+$/, "");
 
 /** The path from one note's folder to another note, like "../Ideas.md". */
 export function relativePath(from: string, to: string) {
+  if (to.startsWith("zotero:")) return to;
   const here = folderOf(from);
   const there = to.split("/");
   let same = 0;
@@ -137,6 +163,9 @@ export function relativePath(from: string, to: string) {
  * addresses have %20 for spaces (`decode`).
  */
 export function resolvePath(from: string, address: string, decode: boolean): string | null {
+  // (A Zotero paper's address is the paper, from any note: `zotero:<paper id>`.)
+  const paper = /^zotero:([^#]+)/.exec(address);
+  if (paper) return `zotero:${paper[1]}`;
   if (/^[a-z][a-z0-9+.-]*:/i.test(address) || address.startsWith("#") || address.startsWith("/")) return null;
   let target = address.split("#")[0];
   if (decode) {

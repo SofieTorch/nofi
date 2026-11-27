@@ -1,4 +1,5 @@
 import {
+  mdiArrowLeft,
   mdiMagnifyMinusOutline,
   mdiMagnifyPlusOutline,
   mdiArrowExpandHorizontal,
@@ -20,7 +21,10 @@ import {
   COLOURS,
   type Colour,
   loadCitations,
+  moveAnnotation,
+  moveCitedSpot,
   type NewAnnotation,
+  isZoteroPaper,
   partOfAnnotation,
   readAnnotations,
   recolourAnnotation,
@@ -28,17 +32,29 @@ import {
 } from "../pdf/annotations";
 import * as api from "../api";
 import { CARD_TYPE, type Dragged, readPart, writePart } from "../board/board";
-import { copyAddress, workspaceNotes } from "../editor/noteLinks";
+import { copyAddress, followLinkTarget, resolvePath, workspaceNotes } from "../editor/noteLinks";
+import { NoteNameDialog, suggestedName } from "../pdf/NoteNameDialog";
 import { type Choice, NotePicker } from "../pdf/NotePicker";
+import { FindBar, matchesIn } from "../ui/FindBar";
 import { IconButton } from "../ui/IconButton";
+import { sidebarRight } from "../ui/icons";
 import { Menu } from "../ui/Menu";
-import { type OutlineItem, openPdf, type PdfDocument, type PdfPage } from "./pdf";
+import { findPaper } from "../explorer/Library";
+import { layerFindText } from "./pdfText";
+import { type OutlineItem, openPdf, type PdfDocument, type PdfInfo, type PdfLink, type PdfPage } from "./pdf";
 
 type Zoom = "fit" | number;
+/** Text to find, on its `nth` match on a page (a match the workspace's search found). */
+export type FindAt = { query: string; page?: number; nth?: number };
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+/** How far pinching can zoom out and in. */
+const SMALLEST = 0.25;
+const BIGGEST = 4;
 
 /** Where each PDF was read up to, and its zoom: drawn again (as a pane splits), it stays there. */
 const places = new Map<string, { top: number; left: number; zoom: Zoom }>();
+/** Whether the margin's notes are shown (the toolbar's switch): for every PDF, while the app is open. */
+let marginShown = true;
 
 /**
  * A PDF from the workspace, page after page, like a reader: zoom in and out, or fit the pane's
@@ -56,7 +72,7 @@ export function PdfView({
   onOpenNote,
 }: {
   path: string;
-  goTo?: { part: string };
+  goTo?: { part?: string; find?: FindAt };
   /** Changes when notes are saved: the margin reads them again. */
   version?: number;
   /** Opens a note beside the PDF, at a part (an annotation, or "end"). */
@@ -81,6 +97,18 @@ export function PdfView({
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   /** The page at the top of the pane (as you scroll, or go to one). */
   const [current, setCurrent] = useState(1);
+  /**
+   * Finding (⌘F): what's found, on which page and the how-manyth there (null while finding), and
+   * the match you're on. `seek` counts the times a match was gone to: its page then shows it.
+   */
+  const [finding, setFinding] = useState<{ query: string; focus: number } | null>(null);
+  const [found, setFound] = useState<{ page: number; nth: number }[] | null>(null);
+  const [foundAt, setFoundAt] = useState(0);
+  const [seek, setSeek] = useState(0);
+  /** A match to go to once they're found (from the workspace's search). */
+  const findTarget = useRef<{ page?: number; nth?: number } | null>(null);
+  /** Each page's text, read once. */
+  const pageTexts = useRef(new Map<number, string>());
   /** The PDF's contents (empty if it has none), and whether they're open beside the pages. */
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [showContents, setShowContents] = useState(false);
@@ -100,11 +128,16 @@ export function PdfView({
   /** Something that went wrong annotating (shown under the toolbar). */
   const [failure, setFailure] = useState<string>();
   const [showMentions, setShowMentions] = useState(true);
+  const [showMargin, setShowMargin] = useState(marginShown);
   const [reread, setReread] = useState(0);
   /** Selected text, with where to offer Highlight and Comment (in the scrolled content). */
   const [selection, setSelection] = useState<{ page: number; quote: string; x: number; y: number } | null>(null);
   /** Where each annotation's passage is on its page (its top, in the page's pixels). */
   const [marks, setMarks] = useState<Record<string, number>>({});
+  /** A Zotero paper's PDF (`zotero:<id>`): read from Zotero; its details are Zotero's. */
+  const fromZotero = isZoteroPaper(path);
+  /** A Zotero paper's source note being named (the first note on it), and what the note's about. */
+  const [naming, setNaming] = useState<{ annotation: Annotation | NewAnnotation; suggested: string } | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -124,7 +157,7 @@ export function PdfView({
 
   const shown = citations.filter((c) => c.source || showMentions);
   // (In a narrow pane, the pages keep the room: the passages are still highlighted.)
-  const hasMargin = shown.length > 0 && (width === 0 || width >= 640);
+  const hasMargin = showMargin && shown.length > 0 && (width === 0 || width >= 640);
 
   /** The text selected on a page, its lines kept, spaces within a line tidied. */
   function selectedText() {
@@ -177,6 +210,24 @@ export function PdfView({
   };
 
   /** Changes the annotations or notes; then they're read again. */
+  /**
+   * Moves a note's mark to another spot of its page: saved with the annotations, and the notes
+   * citing its old spot are changed to cite the new one. (Shown there straight away.)
+   */
+  function moveMark(annotation: Annotation, to: { x: number; y: number }) {
+    if (annotation.type !== "note") return;
+    const spot = { x: Math.round(to.x), y: Math.round(to.y) };
+    if (spot.x === annotation.x && spot.y === annotation.y) return;
+    setAnnotations((all) => all.map((a) => (a.id === annotation.id ? { ...a, ...spot } : a)));
+    setCitations((all) =>
+      all.map((c) => (c.page === annotation.page && c.point?.x === annotation.x && c.point?.y === annotation.y ? { ...c, point: spot } : c)),
+    );
+    run(async () => {
+      await moveAnnotation(path, annotation.id, spot);
+      await moveCitedSpot(path, annotation.page, { x: annotation.x, y: annotation.y }, spot);
+    });
+  }
+
   async function run(action: () => Promise<unknown>) {
     setFailure(undefined);
     try {
@@ -229,17 +280,31 @@ export function PdfView({
     setPicker({ annotation, ...where });
   }
 
-  /** Writes a note about a part of the PDF: it's marked (unless it is already), and the note opens beside, to write. */
+  /** The paper's details: Zotero's for a Zotero paper, else what the PDF says. */
+  async function info(): Promise<PdfInfo> {
+    if (fromZotero) {
+      const paper = await findPaper(path.slice("zotero:".length));
+      if (paper) return { title: paper.title, authors: paper.authors, ...(paper.year && { year: paper.year }) };
+    }
+    return document?.info ? document.info() : {};
+  }
+
+  const taken = (candidate: string) => api.readNote(candidate).then((text) => typeof text === "string", () => false);
+
+  /**
+   * Writes a note about a part of the PDF: it's marked (unless it is already), and the note opens
+   * beside, to write. A Zotero paper's new source note is named first (it goes at the top of the
+   * workspace, not beside the PDF in Zotero).
+   */
   function writeNote(annotation: Annotation | NewAnnotation, into?: Choice) {
+    const newSource = into ? "newNote" in into && !into.at : about.sources.length === 0;
+    if (fromZotero && newSource) {
+      run(async () => setNaming({ annotation, suggested: suggestedName((await info()).title ?? "Paper") }));
+      return;
+    }
     run(async () => {
       if (!("id" in annotation)) await addAnnotation(path, annotation);
-      const { note, at } = await addNote(
-        path,
-        partOfAnnotation(annotation),
-        async () => (document?.info ? document.info() : {}),
-        (candidate) => api.readNote(candidate).then((text) => typeof text === "string", () => false),
-        into,
-      );
+      const { note, at } = await addNote(path, partOfAnnotation(annotation), info, taken, into);
       onOpenNote?.(note, at);
     });
   }
@@ -284,7 +349,7 @@ export function PdfView({
 
   // A link to a page: it's scrolled to, once the pages are there (an area is shown for a moment).
   useEffect(() => {
-    if (!goTo || !document) return;
+    if (!goTo?.part || !document) return;
     const part = readPart(`#${goTo.part}`);
     if (!part.page) return;
     const page = part.page;
@@ -347,6 +412,118 @@ export function PdfView({
     event.dataTransfer.setData(CARD_TYPE, JSON.stringify(dragged));
   }
 
+  /**
+   * Where you were before each time you went somewhere (by a link, the contents or a page
+   * number): a page, and how far into it (in its points, so it's the same place at any zoom).
+   */
+  const [trail, setTrail] = useState<{ page: number; into: number }[]>([]);
+  /** Notes where you are, before going somewhere. */
+  function leaving() {
+    const box = scroller.current;
+    const page = pageInView();
+    const element = pageBoxes.current.get(page);
+    if (!box || !element) return;
+    const into = (box.getBoundingClientRect().top - element.getBoundingClientRect().top) / scale;
+    setTrail((current) => [...current, { page, into }]);
+  }
+  /** Back to where you were before the last place you went to. */
+  function goBack() {
+    const spot = trail[trail.length - 1];
+    const box = scroller.current;
+    const element = spot && pageBoxes.current.get(spot.page);
+    if (!spot || !box || !element) return;
+    setTrail((current) => current.slice(0, -1));
+    box.scrollTop = element.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop + spot.into * scale;
+    setCurrent(spot.page);
+  }
+
+  /** Opens the find bar, with the text selected on the pages (or what was found last). */
+  function openFind(query?: string) {
+    const selectedText = window.getSelection()?.toString().replace(/\s+/g, " ").trim();
+    const wanted = query ?? (selectedText && scroller.current?.contains(window.getSelection()?.anchorNode ?? null) ? selectedText : finding?.query ?? "");
+    setFinding((current) => ({ query: wanted, focus: (current?.focus ?? 0) + 1 }));
+  }
+
+  function closeFind() {
+    setFinding(null);
+    setFound(null);
+    scroller.current?.focus();
+  }
+
+  /** Goes to a match: its page comes into view (if it isn't), and then the match. */
+  function goToMatch(matches: { page: number; nth: number }[], index: number) {
+    if (!matches.length) return;
+    const at = ((index % matches.length) + matches.length) % matches.length;
+    setFoundAt(at);
+    setSeek((n) => n + 1);
+    const box = scroller.current;
+    const element = pageBoxes.current.get(matches[at].page);
+    if (!box || !element) return;
+    const page = element.getBoundingClientRect();
+    const view = box.getBoundingClientRect();
+    if (!(page.bottom > view.top && page.top < view.bottom)) goToPage(matches[at].page);
+  }
+
+  // Finding the text on every page.
+  const findQuery = finding?.query ?? "";
+  useEffect(() => {
+    pageTexts.current.clear();
+  }, [document]);
+  useEffect(() => {
+    if (!document || !findQuery.trim()) {
+      setFound(findQuery.trim() ? null : []);
+      return;
+    }
+    let current = true;
+    setFound(null);
+    (async () => {
+      const matches: { page: number; nth: number }[] = [];
+      for (let number = 1; number <= document.pages; number++) {
+        let text = pageTexts.current.get(number);
+        if (text === undefined) {
+          text = (await (await document.page(number)).plainText?.().catch(() => "")) ?? "";
+          pageTexts.current.set(number, text);
+        }
+        if (!current) return;
+        matchesIn(text, findQuery, true).forEach((_, nth) => matches.push({ page: number, nth }));
+      }
+      setFound(matches);
+      // The match asked for, or the first from the page you're on.
+      const target = findTarget.current;
+      findTarget.current = null;
+      const asked = target ? matches.findIndex((m) => m.page === target.page && m.nth === (target.nth ?? 0)) : -1;
+      const fromHere = matches.findIndex((m) => m.page >= pageInView());
+      goToMatch(matches, asked >= 0 ? asked : Math.max(0, fromHere));
+    })();
+    return () => {
+      current = false;
+    };
+  }, [document, findQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A match from the workspace's search: found here.
+  useEffect(() => {
+    if (!goTo?.find) return;
+    findTarget.current = { page: goTo.find.page, nth: goTo.find.nth };
+    if (goTo.find.query === findQuery && found) {
+      const index = found.findIndex((m) => m.page === goTo.find!.page && m.nth === (goTo.find!.nth ?? 0));
+      findTarget.current = null;
+      goToMatch(found, Math.max(0, index));
+    }
+    openFind(goTo.find.query);
+  }, [goTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** A match shown on its page: scrolled into view if it isn't (a third of the way down). */
+  function showFound(page: number, top: number, bottom: number) {
+    const box = scroller.current;
+    const element = pageBoxes.current.get(page);
+    if (!box || !element) return;
+    const pageTop = element.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    const from = pageTop + top;
+    const to = pageTop + bottom;
+    if (from >= box.scrollTop && to <= box.scrollTop + box.clientHeight) return;
+    box.scrollTop = Math.max(0, from - box.clientHeight / 3);
+  }
+
   /** Goes to a page: its top at the top of the pane. */
   function goToPage(page: number) {
     pageBoxes.current.get(page)?.scrollIntoView?.({ block: "start" });
@@ -354,7 +531,7 @@ export function PdfView({
   }
 
   /** How far down the pages a part of the contents starts (in the scrolled pages' pixels). */
-  function offsetOf(item: OutlineItem) {
+  function offsetOf(item: { page?: number; top?: number }) {
     const box = scroller.current;
     const page = item.page !== undefined ? pageBoxes.current.get(item.page) : undefined;
     if (!box || !page) return null;
@@ -363,17 +540,36 @@ export function PdfView({
 
   /** Goes to a part of the contents: where it starts on its page (with a little room above), or its page's top. */
   function goToItem(item: OutlineItem) {
+    leaving();
+    goToPlace(item, (at) => setChosen({ item, at }));
+  }
+
+  /** Goes to a place in the PDF: where it is on its page (with a little room above), or its page's top. */
+  function goToPlace(item: { page?: number; top?: number }, gone: (at: number) => void = () => {}) {
     const box = scroller.current;
     const offset = offsetOf(item);
     if (item.page === undefined) return;
     if (item.top === undefined || !box || offset === null) {
       goToPage(item.page);
-      setChosen({ item, at: box?.scrollTop ?? 0 });
+      gone(box?.scrollTop ?? 0);
       return;
     }
     box.scrollTop = Math.max(0, offset - 12);
     setCurrent(item.page);
-    setChosen({ item, at: box.scrollTop });
+    gone(box.scrollTop);
+  }
+
+  /** Follows a link on a page: a website opens in the browser, a file in the workspace (or its app), a place here is gone to. */
+  function followPdfLink(link: PdfLink, newPane: boolean) {
+    if ("url" in link) return followLinkTarget({ url: link.url }, newPane);
+    if ("file" in link) {
+      const [address, part] = link.file.split("#");
+      const file = resolvePath(path, address, true);
+      if (file) followLinkTarget(part ? { path: file, part } : { path: file }, newPane);
+      return;
+    }
+    leaving();
+    goToPlace(link);
   }
 
   /** The part of the contents being read: the one gone to (until the pages are scrolled), or the last to start above the pane's top. */
@@ -425,8 +621,7 @@ export function PdfView({
     let opened: PdfDocument | undefined;
     setDocument(undefined);
     setProblem(undefined);
-    api
-      .readWorkspaceFile(path)
+    (path.startsWith("zotero:") ? api.readZoteroPdf(path.slice("zotero:".length)) : api.readWorkspaceFile(path))
       .then(openPdf)
       .then(async (pdf) => {
         opened = pdf;
@@ -472,6 +667,17 @@ export function PdfView({
     if (shownScale.current === scale) return;
     shownScale.current = scale;
     const box = scroller.current;
+    // Zoomed by pinching: the point that was under the pointer stays under it.
+    const pinched = pinchedAt.current;
+    pinchedAt.current = null;
+    if (pagesBox.current) pagesBox.current.style.transform = "";
+    const pinchedPage = pinched && pageBoxes.current.get(pinched.page);
+    if (box && pinched && pinchedPage) {
+      const now = pinchedPage.getBoundingClientRect();
+      box.scrollTop += now.top + pinched.y * scale - pinched.clientY;
+      box.scrollLeft += now.left + pinched.x * scale - pinched.clientX;
+      return;
+    }
     const at = place.current;
     const element = at && pageBoxes.current.get(at.page);
     if (!box || !at || !element) return;
@@ -492,6 +698,103 @@ export function PdfView({
     box.scrollTop = place.top;
     box.scrollLeft = place.left;
   }, [document]); // eslint-disable-line react-hooks/exhaustive-deps
+  /**
+   * Pinching (or ⌘/Ctrl and scrolling): while it lasts, the pages are scaled as they are, at once;
+   * when it ends, they're drawn again at that zoom. The point under the pointer stays under it.
+   */
+  const pagesBox = useRef<HTMLDivElement>(null);
+  type Pinch = { by: number; startedBy: number; timer?: number };
+  const pinch = useRef<Pinch | null>(null);
+  /** Where the pinch started: a page, the point on it (in its points), and where that is in the window. */
+  const pinchedAt = useRef<{ page: number; x: number; y: number; clientX: number; clientY: number } | null>(null);
+  const scaleNow = useRef(scale);
+  scaleNow.current = scale;
+  useEffect(() => {
+    const box = scroller.current;
+    if (!box) return;
+    const begin = (clientX: number, clientY: number): Pinch | null => {
+      if (pinch.current) return pinch.current;
+      const pages = pagesBox.current;
+      if (!pages) return null;
+      const content = pages.getBoundingClientRect();
+      pages.style.transformOrigin = `${clientX - content.left}px ${clientY - content.top}px`;
+      // The page under the pointer (or the closest one).
+      let closest: { page: number; rect: DOMRect; off: number } | null = null;
+      for (const [page, element] of pageBoxes.current) {
+        const rect = element.getBoundingClientRect();
+        const off = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+        if (!closest || off < closest.off) closest = { page, rect, off };
+      }
+      pinchedAt.current = closest && {
+        page: closest.page,
+        x: (clientX - closest.rect.left) / scaleNow.current,
+        y: (clientY - closest.rect.top) / scaleNow.current,
+        clientX,
+        clientY,
+      };
+      return (pinch.current = { by: 1, startedBy: 1 });
+    };
+    const show = (gesture: Pinch, by: number) => {
+      gesture.by = Math.min(BIGGEST / scaleNow.current, Math.max(SMALLEST / scaleNow.current, by));
+      if (pagesBox.current) pagesBox.current.style.transform = `scale(${Number(gesture.by.toFixed(4))})`;
+    };
+    const finish = () => {
+      const gesture = pinch.current;
+      pinch.current = null;
+      if (!gesture) return;
+      window.clearTimeout(gesture.timer);
+      const next = Math.round(scaleNow.current * gesture.by * 100) / 100;
+      if (next === Math.round(scaleNow.current * 100) / 100) {
+        pinchedAt.current = null;
+        if (pagesBox.current) pagesBox.current.style.transform = "";
+        return;
+      }
+      setZoom(next);
+    };
+    // A trackpad's pinch comes as the wheel with Ctrl held (in Chromium, and on Windows and Linux);
+    // a mouse's wheel with ⌘ or Ctrl held zooms too.
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const gesture = begin(event.clientX, event.clientY);
+      if (!gesture) return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+      show(gesture, gesture.by * Math.min(1.25, Math.max(0.8, Math.exp(-delta / 100))));
+      window.clearTimeout(gesture.timer);
+      gesture.timer = window.setTimeout(finish, 150);
+    };
+    // Safari's webview (the app on a Mac) sends gesture events, with how much bigger it is now.
+    type Gesture = Event & { scale?: number; clientX?: number; clientY?: number };
+    const centre = () => {
+      const rect = box.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    };
+    const gestureStart = (event: Gesture) => {
+      event.preventDefault();
+      const gesture = begin(event.clientX ?? centre().x, event.clientY ?? centre().y);
+      if (gesture) gesture.startedBy = gesture.by;
+    };
+    const gestureChange = (event: Gesture) => {
+      event.preventDefault();
+      if (pinch.current) show(pinch.current, pinch.current.startedBy * (event.scale ?? 1));
+    };
+    const gestureEnd = (event: Gesture) => {
+      event.preventDefault();
+      finish();
+    };
+    box.addEventListener("wheel", wheel, { passive: false });
+    box.addEventListener("gesturestart", gestureStart);
+    box.addEventListener("gesturechange", gestureChange);
+    box.addEventListener("gestureend", gestureEnd);
+    return () => {
+      box.removeEventListener("wheel", wheel);
+      box.removeEventListener("gesturestart", gestureStart);
+      box.removeEventListener("gesturechange", gestureChange);
+      box.removeEventListener("gestureend", gestureEnd);
+      window.clearTimeout(pinch.current?.timer);
+    };
+  }, []);
+
   const step = (direction: 1 | -1) => {
     const next = direction > 0 ? ZOOMS.find((z) => z > scale + 0.01) : [...ZOOMS].reverse().find((z) => z < scale - 0.01);
     if (next) setZoom(next);
@@ -521,6 +824,9 @@ export function PdfView({
       if (citation) onOpenNote?.(citation.note, citation.at);
       else noteAbout(annotation);
     },
+    onMoveMark: (annotation: Annotation, to: { x: number; y: number }) => moveMark(annotation, to),
+    onLink: (link: PdfLink, newPane: boolean) => followPdfLink(link, newPane),
+    onFoundAt: (page: number, top: number, bottom: number) => showFound(page, top, bottom),
     onKeepArea: keepArea,
     onDragArea: (event: React.DragEvent, chosen: Area) => {
       event.stopPropagation();
@@ -542,6 +848,9 @@ export function PdfView({
       if (citation) onOpenNote?.(citation.note, citation.at);
       else noteAbout(annotation);
     },
+    onMoveMark: (annotation, to) => moveMark(annotation, to),
+    onLink: (link, newPane) => followPdfLink(link, newPane),
+    onFoundAt: (page, top, bottom) => showFound(page, top, bottom),
     onKeepArea: keepArea,
     onDragArea: (event, chosen) => {
       event.stopPropagation();
@@ -563,13 +872,39 @@ export function PdfView({
       onMarkMenu: call("onMarkMenu"),
       onMarkClick: call("onMarkClick"),
       onOpenMark: call("onOpenMark"),
+      onMoveMark: call("onMoveMark"),
+      onLink: call("onLink"),
+      onFoundAt: call("onFoundAt"),
       onKeepArea: call("onKeepArea"),
       onDragArea: call("onDragArea"),
     };
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      // ⌘[ (Alt+← elsewhere) or the mouse's back button: back to where you were.
+      onKeyDown={(event) => {
+        // ⌘F (Ctrl+F elsewhere): find in the PDF; Esc closes it.
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "f" && !event.shiftKey) {
+          event.preventDefault();
+          openFind();
+          return;
+        }
+        if (event.key === "Escape" && finding) {
+          event.preventDefault();
+          closeFind();
+          return;
+        }
+        const back = ((event.metaKey || event.ctrlKey) && event.key === "[") || (event.altKey && event.key === "ArrowLeft");
+        if (!back || !trail.length || (event.target as Element).closest?.("input, textarea, [contenteditable]")) return;
+        event.preventDefault();
+        goBack();
+      }}
+      onMouseUp={(event) => {
+        if (event.button === 3 && trail.length) goBack();
+      }}
+    >
       <div role="toolbar" aria-label="PDF" className="flex h-8 shrink-0 items-center gap-1 border-b border-neutral-100 px-3 text-xs text-neutral-500">
         {outline.length > 0 && (
           <IconButton
@@ -582,7 +917,19 @@ export function PdfView({
             }}
           />
         )}
-        {document && <PageBox page={current} pages={document.pages} onGo={goToPage} />}
+        {trail.length > 0 && (
+          <IconButton icon={mdiArrowLeft} label={`Back to page ${trail[trail.length - 1].page}`} onClick={goBack} />
+        )}
+        {document && (
+          <PageBox
+            page={current}
+            pages={document.pages}
+            onGo={(page) => {
+              leaving();
+              goToPage(page);
+            }}
+          />
+        )}
         <span className="ml-auto" aria-live="polite">
           {Math.round(scale * 100)}%
         </span>
@@ -590,7 +937,18 @@ export function PdfView({
         <IconButton icon={mdiMagnifyPlusOutline} label="Zoom in" onClick={() => step(1)} />
         <IconButton icon={mdiArrowExpandHorizontal} label="Fit width" pressed={zoom === "fit"} onClick={() => setZoom("fit")} />
         <IconButton icon={mdiLinkVariant} label="Copy link to this page" onClick={() => copyLink(pageInView())} />
-        {citations.some((c) => !c.source) && (
+        {citations.length > 0 && (
+          <IconButton
+            icon={sidebarRight}
+            label="Show notes in the margin"
+            pressed={showMargin}
+            onClick={() => {
+              marginShown = !showMargin;
+              setShowMargin(marginShown);
+            }}
+          />
+        )}
+        {showMargin && citations.some((c) => !c.source) && (
           <IconButton
             icon={mdiCommentMultipleOutline}
             label="Show mentions from other notes"
@@ -624,7 +982,21 @@ export function PdfView({
           {failure}
         </p>
       )}
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+      {finding && (
+        <div className="pointer-events-none absolute top-2 right-4 z-30 flex justify-end">
+          <FindBar
+            query={finding.query}
+            onQuery={(query) => setFinding((current) => current && { ...current, query })}
+            count={found ? found.length : null}
+            current={found?.length ? foundAt : null}
+            onNext={() => found && goToMatch(found, foundAt + 1)}
+            onPrevious={() => found && goToMatch(found, foundAt - 1)}
+            onClose={closeFind}
+            focusSignal={finding.focus}
+          />
+        </div>
+      )}
       {showContents && outline.length > 0 && <Contents outline={outline} reading={reading()} onGo={goToItem} />}
       <div
         ref={scroller}
@@ -642,7 +1014,9 @@ export function PdfView({
           setSelection(null);
           setMarkBar(null);
         }}
-        className="relative min-h-0 flex-1 overflow-auto bg-neutral-100"
+        // (Focusable, so its keys, like ⌘[ and ⌘F, work after clicking the pages.)
+        tabIndex={-1}
+        className="relative min-h-0 flex-1 overflow-auto bg-neutral-100 outline-none"
       >
         {problem ? (
           <p role="alert" className="p-6 text-sm text-red-600">
@@ -650,7 +1024,7 @@ export function PdfView({
           </p>
         ) : (
           document && (
-            <div className="relative mx-auto flex w-fit flex-col gap-3 py-4" style={{ paddingRight: hasMargin ? MARGIN : 0 }}>
+            <div ref={pagesBox} className="relative mx-auto flex w-fit flex-col gap-3 py-4" style={{ paddingRight: hasMargin ? MARGIN : 0 }}>
               {Array.from({ length: document.pages }, (_, i) => (
                 <Page
                   key={i}
@@ -667,6 +1041,9 @@ export function PdfView({
                   annotations={annotationsOn.get(i + 1) ?? NONE}
                   onMarks={onMarks}
                   placingNote={placingNote}
+                  findQuery={found?.length ? findQuery : undefined}
+                  foundCurrent={found?.[foundAt]?.page === i + 1 ? found[foundAt].nth : undefined}
+                  seek={found?.[foundAt]?.page === i + 1 ? seek : 0}
                   {...pageActions}
                 />
               ))}
@@ -733,6 +1110,17 @@ export function PdfView({
               Add note
             </button>
           </div>
+        )}
+        {naming && (
+          <NoteNameDialog
+            suggested={naming.suggested}
+            taken={taken}
+            onCreate={(at) => {
+              setNaming(null);
+              writeNote(naming.annotation, { newNote: true, at });
+            }}
+            onCancel={() => setNaming(null)}
+          />
         )}
         {picker && (
           <NotePicker
@@ -925,6 +1313,12 @@ const Page = memo(function Page({
   onMarkMenu,
   onMarkClick,
   onOpenMark,
+  onMoveMark,
+  onLink,
+  onFoundAt,
+  findQuery,
+  foundCurrent,
+  seek,
   onKeepArea,
 }: {
   document: PdfDocument;
@@ -958,6 +1352,17 @@ const Page = memo(function Page({
   onMarkClick: (annotation: Annotation, x: number, y: number) => void;
   /** Clicking a note's mark: its note opens. */
   onOpenMark: (annotation: Annotation) => void;
+  /** Dragging a note's mark: it moves there (in the page's points). */
+  onMoveMark: (annotation: Annotation, to: { x: number; y: number }) => void;
+  /** Clicking a link on the page (with ⌘ or Ctrl: in a new pane). */
+  onLink: (link: PdfLink, newPane: boolean) => void;
+  /** Says where the match you're on is on the page (its top and bottom), each time it's gone to. */
+  onFoundAt: (page: number, top: number, bottom: number) => void;
+  /** Text being found (its matches are highlighted), and which of them on this page you're on. */
+  findQuery?: string;
+  foundCurrent?: number;
+  /** Counts the times the match here was gone to. */
+  seek: number;
   /** The area chosen: kept as an annotation, maybe with a note. */
   onKeepArea: (withNote: boolean) => void;
 }) {
@@ -987,6 +1392,20 @@ const Page = memo(function Page({
       current = false;
     };
   }, [near, page, document, number]);
+
+  // Its links, once it's near the view.
+  const [links, setLinks] = useState<PdfLink[]>([]);
+  useEffect(() => {
+    if (!near || !page?.links) return;
+    let current = true;
+    page
+      .links()
+      .then((found) => current && setLinks(found))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [near, page]);
 
   /** Counts the times the page's text was laid out (passages are found in it). */
   const [laidOut, setLaidOut] = useState(0);
@@ -1030,6 +1449,38 @@ const Page = memo(function Page({
     setHighlights((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
     onMarks(number, Object.fromEntries(cited.map((c) => [c.key, c.rects[0]?.top ?? 0])));
   }, [laidOut, annotations, citations, number, onMarks]);
+
+  // The text being found: each match's boxes, once the page's text is there.
+  const [foundBoxes, setFoundBoxes] = useState<{ rects: Rect[]; current: boolean }[]>([]);
+  const shownSeek = useRef(0);
+  useEffect(() => {
+    const layer = text.current;
+    const pageBox = box.current;
+    if (!findQuery || !laidOut || !layer || !pageBox) {
+      setFoundBoxes((current) => (current.length ? [] : current));
+      return;
+    }
+    const origin = pageBox.getBoundingClientRect();
+    const { text: pageText, chars } = layerFindText(layer);
+    const boxes = matchesIn(pageText, findQuery, true).map((match, nth) => {
+      const range = layer.ownerDocument.createRange();
+      const start = chars[match.from];
+      const end = chars[match.to - 1];
+      range.setStart(start.node, start.offset);
+      range.setEnd(end.node, end.offset + 1);
+      const rects = [...(range.getClientRects?.() ?? [])].filter((r) => r.width > 0 && r.height > 0);
+      return {
+        rects: byLine(rects.map((r) => ({ left: r.left - origin.left, top: r.top - origin.top, width: r.width, height: r.height }))),
+        current: nth === foundCurrent,
+      };
+    });
+    setFoundBoxes(boxes);
+    const shown = boxes.find((b) => b.current)?.rects;
+    if (shown?.length && seek !== shownSeek.current) {
+      shownSeek.current = seek;
+      onFoundAt(number, Math.min(...shown.map((r) => r.top)), Math.max(...shown.map((r) => r.top + r.height)));
+    }
+  }, [laidOut, findQuery, foundCurrent, seek, number, onFoundAt]);
 
   /** The annotation at a point of the screen, if there's one there. */
   function annotationAt(clientX: number, clientY: number) {
@@ -1107,19 +1558,47 @@ const Page = memo(function Page({
         a.type === "area" ? (
           <div key={a.id} data-area className={`pointer-events-none absolute rounded-sm ring-2 ${AREAS[a.colour]}`} style={areaStyle(a, scale)} />
         ) : a.type === "note" ? (
-          <button
+          <NoteMark
             key={a.id}
-            aria-label={`Note on page ${number}`}
-            title="Open its note"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => onOpenMark(a)}
-            className={`absolute flex items-center justify-center rounded-[4px] text-white shadow-[0_1px_3px_rgba(0,0,0,0.25)] ${SWATCHES[a.colour]}`}
-            style={{ left: a.x * scale, top: a.y * scale, width: NOTE_SIZE, height: NOTE_SIZE }}
-          >
-            <Icon path={mdiNoteText} size="14px" />
-          </button>
+            annotation={a}
+            page={number}
+            scale={scale}
+            citations={citations.filter((c) => c.point?.x === a.x && c.point?.y === a.y)}
+            onOpen={() => onOpenMark(a)}
+            onMove={(to) => onMoveMark(a, to)}
+          />
         ) : null,
       )}
+      {foundBoxes.flatMap((b, i) =>
+        b.rects.map((r, j) => (
+          <div
+            key={`found-${i}-${j}`}
+            data-found={b.current ? "current" : ""}
+            className={`pointer-events-none absolute rounded-[2px] mix-blend-multiply ${b.current ? "bg-orange-400/60" : "bg-yellow-300/50"}`}
+            style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
+          />
+        )),
+      )}
+      {links.map((link, i) => {
+        const label = "url" in link ? link.url : "file" in link ? link.file : `Page ${link.page}`;
+        return (
+          <a
+            key={i}
+            href={"url" in link ? link.url : "#"}
+            aria-label={label}
+            title={label}
+            draggable={false}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onLink(link, event.metaKey || event.ctrlKey);
+            }}
+            className={`absolute rounded-[2px] hover:bg-sky-400/10 ${choosingArea || placingNote ? "pointer-events-none" : "cursor-pointer"}`}
+            style={areaStyle(link, scale)}
+          />
+        );
+      })}
       {flash && <div className="pointer-events-none absolute rounded-sm bg-amber-300/30 ring-2 ring-amber-400" style={areaStyle(flash, scale)} />}
       {area && (
         <div
@@ -1340,5 +1819,111 @@ function Margin({
         </button>
       ))}
     </aside>
+  );
+}
+
+/**
+ * A note's mark on a page (a note at a spot). Clicking it opens its note; hovering it shows a
+ * preview of the notes citing it; dragging it moves it (a few pixels' wobble is still a click).
+ */
+function NoteMark({
+  annotation,
+  page,
+  scale,
+  citations,
+  onOpen,
+  onMove,
+}: {
+  annotation: Annotation & { type: "note" };
+  page: number;
+  scale: number;
+  citations: Citation[];
+  onOpen: () => void;
+  onMove: (to: { x: number; y: number }) => void;
+}) {
+  /** While dragging: how far it's been moved, in pixels. */
+  const [moved, setMoved] = useState<{ dx: number; dy: number } | null>(null);
+  const [preview, setPreview] = useState(false);
+  const hovering = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** Set when a drag ends, so the click that follows doesn't open the note. */
+  const dragged = useRef(false);
+  const previewId = `note-preview-${annotation.id}`;
+
+  useEffect(() => () => clearTimeout(hovering.current), []);
+
+  function startDrag(event: React.PointerEvent) {
+    event.stopPropagation();
+    if (event.button !== 0) return;
+    const start = { x: event.clientX, y: event.clientY };
+    let far = false;
+    const onPointerMove = (e: PointerEvent) => {
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (!far && Math.hypot(dx, dy) < 4) return;
+      far = true;
+      setPreview(false);
+      setMoved({ dx, dy });
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setMoved(null);
+      if (!far) return;
+      dragged.current = true;
+      onMove({
+        x: Math.max(0, annotation.x + (e.clientX - start.x) / scale),
+        y: Math.max(0, annotation.y + (e.clientY - start.y) / scale),
+      });
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  }
+
+  const left = annotation.x * scale + (moved?.dx ?? 0);
+  const top = annotation.y * scale + (moved?.dy ?? 0);
+  return (
+    <>
+      <button
+        aria-label={`Note on page ${page}`}
+        aria-describedby={preview ? previewId : undefined}
+        onPointerDown={startDrag}
+        onPointerEnter={() => {
+          clearTimeout(hovering.current);
+          hovering.current = setTimeout(() => setPreview(true), 250);
+        }}
+        onPointerLeave={() => {
+          clearTimeout(hovering.current);
+          setPreview(false);
+        }}
+        onClick={() => {
+          if (dragged.current) {
+            dragged.current = false;
+            return;
+          }
+          onOpen();
+        }}
+        className={`absolute z-10 flex items-center justify-center rounded-[4px] text-white shadow-[0_1px_3px_rgba(0,0,0,0.25)] ${SWATCHES[annotation.colour]} ${
+          moved ? "cursor-grabbing" : "cursor-pointer"
+        }`}
+        style={{ left, top, width: NOTE_SIZE, height: NOTE_SIZE }}
+      >
+        <Icon path={mdiNoteText} size="14px" />
+      </button>
+      {preview && citations.length > 0 && (
+        <div
+          id={previewId}
+          role="tooltip"
+          className="pointer-events-none absolute z-30 flex w-64 flex-col gap-2 rounded-lg bg-white p-3 text-xs text-neutral-700 shadow-[0_4px_24px_rgba(0,0,0,0.16)] ring-1 ring-neutral-200"
+          style={{ left: left + NOTE_SIZE + 6, top }}
+        >
+          {citations.map((c) => (
+            <div key={`${c.note}|${c.at}`}>
+              <div className="mb-0.5 text-[11px] text-neutral-400">{c.note.split("/").pop()!.replace(/\.[^.]+$/, "")}</div>
+              <p className="line-clamp-6 leading-snug">{c.text || "An empty note."}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }

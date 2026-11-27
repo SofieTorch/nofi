@@ -16,20 +16,118 @@ beforeEach(() => {
 
 async function renderOpenWorkspace() {
   render(<App />);
-  await screen.findByRole("heading", { name: "Research Notes" });
+  // (Its name is at the top of the sidebar, which may be hidden.)
+  await screen.findByRole("heading", { name: "Research Notes", hidden: true });
 }
 
 const explorer = () => screen.queryByRole("complementary", { name: "File explorer" });
 const hoverEdge = () => screen.getByLabelText("Show file explorer");
 const pinButton = () => screen.getByRole("button", { name: /pin file explorer/i });
-const topBar = () => screen.getByRole("banner");
+/** Chooses the sidebar's side in Settings. */
+async function chooseSideInSettings(side: "Left" | "Right") {
+  await chooseInMenu("Marginalia › Settings…");
+  const settings = screen.getByRole("dialog", { name: "Settings" });
+  await userEvent.click(within(within(settings).getByRole("radiogroup", { name: "Sidebar" })).getByRole("radio", { name: side }));
+  return settings;
+}
 const sideOf = (element: HTMLElement | null) => element?.getAttribute("data-side");
 
-describe("Top bar", () => {
-  it("shows the name of the open workspace", async () => {
+describe("The top of the window", () => {
+  it("the Files section's header is the name of the open workspace", async () => {
     await renderOpenWorkspace();
 
-    expect(within(topBar()).getByRole("heading", { name: "Research Notes" })).toBeInTheDocument();
+    const heading = within(explorer()!).getByRole("heading", { name: "Research Notes" });
+    expect(within(heading).getByRole("button", { name: "Research Notes" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(explorer()!).queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
+  });
+
+  it("clicking the workspace's name folds the files away", async () => {
+    vi.mocked(api.listFiles).mockResolvedValue([file("ideas.md")]);
+    await renderOpenWorkspace();
+    await screen.findByRole("button", { name: "ideas.md" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Research Notes" }));
+
+    expect(screen.queryByRole("button", { name: "ideas.md" })).not.toBeInTheDocument();
+  });
+
+  /** No bar across the window: the sidebar and the tabs go all the way up. */
+  it("has no bar across it", async () => {
+    await renderOpenWorkspace();
+
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+  });
+});
+
+// The window's buttons (close, minimise, zoom), like in Zen: shown, except while the sidebar is
+// auto-hidden on the left, out of view. Then they come with it when it slides in, at its top left.
+describe("The window's buttons", () => {
+  const shown = () => vi.mocked(api.showWindowButtons).mock.lastCall?.[0];
+
+  it("are shown with the sidebar pinned", async () => {
+    await renderOpenWorkspace();
+
+    await vi.waitFor(() => expect(shown()).toBe(true));
+  });
+
+  it("are hidden while the sidebar is auto-hidden on the left, out of view", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "auto-hide" });
+
+    await renderOpenWorkspace();
+
+    await vi.waitFor(() => expect(shown()).toBe(false));
+  });
+
+  it("come with the sidebar when it slides in, and go with it", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "auto-hide" });
+    await renderOpenWorkspace();
+
+    await userEvent.hover(hoverEdge());
+    await vi.waitFor(() => expect(shown()).toBe(true));
+
+    await userEvent.unhover(hoverEdge());
+    await vi.waitFor(() => expect(shown()).toBe(false));
+  });
+
+  it("fade in and out with it (but not as the window opens)", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "auto-hide" });
+    await renderOpenWorkspace();
+    await vi.waitFor(() => expect(api.showWindowButtons).toHaveBeenLastCalledWith(false, false));
+
+    await userEvent.hover(hoverEdge());
+    await vi.waitFor(() => expect(api.showWindowButtons).toHaveBeenLastCalledWith(true, true));
+
+    await userEvent.unhover(hoverEdge());
+    await vi.waitFor(() => expect(api.showWindowButtons).toHaveBeenLastCalledWith(false, true));
+  });
+
+  it("floating on the left, it's flush in the window's top left corner, where the buttons are", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "auto-hide" });
+
+    await renderOpenWorkspace();
+
+    // (Out of view until hovered, so hidden from screen readers.)
+    const sidebar = await vi.waitFor(() => document.querySelector<HTMLElement>('aside[aria-label="File explorer"]')!);
+    expect(sidebar.className).toMatch(/\binset-y-0\b/);
+    expect(sidebar.className).toMatch(/\bleft-0\b/);
+  });
+
+  it("stay shown with the sidebar auto-hidden on the right", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "right", mode: "auto-hide" });
+
+    await renderOpenWorkspace();
+
+    await vi.waitFor(() => expect(shown()).toBe(true));
+  });
+
+  it("are shown again when the workspace is closed", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "left", mode: "auto-hide" });
+    await renderOpenWorkspace();
+    await vi.waitFor(() => expect(shown()).toBe(false));
+
+    await chooseInMenu("File › Close Workspace");
+
+    await vi.waitFor(() => expect(shown()).toBe(true));
   });
 });
 
@@ -122,33 +220,37 @@ describe("File explorer: left or right side", () => {
     expect(sideOf(explorer())).toBe("right");
   });
 
-  it("moves to the right with the top bar's 'explorer on the right' button", async () => {
+  it("moves to the right with Settings › Sidebar › Right", async () => {
     await renderOpenWorkspace();
 
-    await userEvent.click(within(topBar()).getByRole("button", { name: /explorer on the right/i }));
+    await chooseSideInSettings("Right");
 
     expect(sideOf(explorer())).toBe("right");
   });
 
-  it("moves back to the left with the top bar's 'explorer on the left' button", async () => {
+  it("moves back to the left with Settings › Sidebar › Left", async () => {
     vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "right", mode: "pinned" });
     await renderOpenWorkspace();
 
-    await userEvent.click(within(topBar()).getByRole("button", { name: /explorer on the left/i }));
+    await chooseSideInSettings("Left");
 
     expect(sideOf(explorer())).toBe("left");
   });
 
-  it("the top bar shows which side the explorer is on", async () => {
+  it("Settings shows which side it's on, for this workspace", async () => {
+    vi.mocked(api.getExplorerLayout).mockResolvedValue({ side: "right", mode: "pinned" });
     await renderOpenWorkspace();
 
-    const left = within(topBar()).getByRole("button", { name: /explorer on the left/i });
-    const right = within(topBar()).getByRole("button", { name: /explorer on the right/i });
-    expect(left).toHaveAttribute("aria-pressed", "true");
-    expect(right).toHaveAttribute("aria-pressed", "false");
+    await chooseInMenu("Marginalia › Settings…");
+
+    const settings = screen.getByRole("dialog", { name: "Settings" });
+    expect(within(settings).getByRole("heading", { name: "This workspace" })).toBeInTheDocument();
+    const sidebar = within(within(settings).getByRole("radiogroup", { name: "Sidebar" }));
+    expect(sidebar.getByRole("radio", { name: "Right" })).toHaveAttribute("aria-checked", "true");
+    expect(sidebar.getByRole("radio", { name: "Left" })).toHaveAttribute("aria-checked", "false");
   });
 
-  /** Layout controls live in the top bar, like in VS Code, not inside the explorer itself. */
+  /** Where it goes is chosen in Settings (or the View menu), not inside the explorer itself. */
   it("the explorer itself has no buttons to move it", async () => {
     await renderOpenWorkspace();
 

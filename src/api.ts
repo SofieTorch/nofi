@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 export type Workspace = {
   name: string;
@@ -51,7 +51,14 @@ export type MenuAction =
   | "go-to-file"
   | "command-palette"
   | "graph-view"
-  | "close-pane";
+  | "close-pane"
+  | "close-tab"
+  | "export-pdf";
+
+/** Closes the app's window (⌘W with no tab open): the app quits. */
+export function closeWindow(): Promise<void> {
+  return invoke("close_window");
+}
 
 /** Calls `handler` whenever the user chooses one of the app's items in the native menu. */
 export function onMenuAction(handler: (action: MenuAction) => void): Promise<UnlistenFn> {
@@ -61,6 +68,11 @@ export function onMenuAction(handler: (action: MenuAction) => void): Promise<Unl
 /** Calls `handler` whenever files come and go in the open workspace's folder (in any app). */
 export function onFilesChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("files-changed", () => handler());
+}
+
+/** Calls `handler` whenever the Zotero library changes (once it's been read), to read it again. */
+export function onZoteroChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("zotero-changed", () => handler());
 }
 
 export type FileEntry = {
@@ -80,6 +92,8 @@ export type ExplorerLayout = {
   side: "left" | "right";
   /** "pinned" stays visible; "auto-hide" shows up, floating, when hovering its edge of the window. */
   mode: "pinned" | "auto-hide";
+  /** Which of its sections are folded away (all open if not said). */
+  collapsed?: { files: boolean; library: boolean };
 };
 
 /** The explorer layout saved for the open workspace (pinned on the left if never changed). */
@@ -97,8 +111,47 @@ export type NoteFormat = "typst" | "markdown";
  * Creates an empty note at the top of the workspace, named "Untitled" (then "Untitled 2"…).
  * Without a format, uses the default (Typst). Resolves to the new note's path in the workspace.
  */
-export function createNote(format?: NoteFormat): Promise<string> {
-  return invoke("create_note", { format });
+export function createNote(format?: NoteFormat, folder?: string): Promise<string> {
+  return invoke("create_note", { format, folder });
+}
+
+/** Creates an empty folder, "New folder" (or "New folder 2"…), in a folder ("" for the top); resolves to its path. */
+export function createFolder(parent: string): Promise<string> {
+  return invoke("create_folder", { parent });
+}
+
+/** Gives a folder a new name; resolves to its new path, or rejects with a readable reason. */
+export function renameFolder(path: string, newName: string): Promise<string> {
+  return invoke("rename_folder", { path, newName });
+}
+
+/** How many files are in a folder, in all its folders. */
+export function filesInFolder(path: string): Promise<number> {
+  return invoke("files_in_folder", { path });
+}
+
+/** Deletes a folder and what's in it by sending it to the system's Trash. */
+export function deleteFolder(path: string): Promise<void> {
+  return invoke("delete_folder", { path });
+}
+
+/** Moves a file or folder into a folder ("" for the top); resolves to its new path. */
+export function moveInto(path: string, folder: string): Promise<string> {
+  return invoke("move_into", { path, folder });
+}
+
+/** Copies a file or folder into a folder ("" for the top), "copy" added to its name if taken; resolves to the copy's path. */
+export function copyInto(path: string, folder: string): Promise<string> {
+  return invoke("copy_into", { path, folder });
+}
+
+/** The explorer's open folders in this workspace. */
+export function getOpenFolders(): Promise<string[]> {
+  return invoke("get_open_folders");
+}
+
+export function saveOpenFolders(open: string[]): Promise<void> {
+  return invoke("save_open_folders", { open });
 }
 
 /**
@@ -154,6 +207,19 @@ export function pagePosition(page: number, x: number, y: number): Promise<number
   return invoke("page_position", { page, x, y });
 }
 
+/** Shows the native Save dialog for a PDF, starting at `defaultPath`. Resolves to null if the user cancels. */
+export async function pickPdfDestination(defaultPath: string): Promise<string | null> {
+  return (await save({ defaultPath, filters: [{ name: "PDF", extensions: ["pdf"] }] })) ?? null;
+}
+
+/**
+ * Exports a Typst note (its text, and its path in the workspace, for its images and such) as a
+ * PDF file at `destination` (a full path). Rejects with the note's first mistake, if it has one.
+ */
+export function exportPdf(note: string, path: string, destination: string): Promise<void> {
+  return invoke("export_pdf", { note, path, destination });
+}
+
 /** Undoes creating a note: removes it, but only while it's still empty. */
 export function removeEmptyNote(path: string): Promise<void> {
   return invoke("remove_empty_note", { path });
@@ -205,6 +271,83 @@ export function searchNotes(query: string): Promise<TextMatch[]> {
 /** Saves an image (pasted or dropped) in the workspace's `assets` folder; returns its path there. */
 export function saveAsset(name: string, bytes: Uint8Array): Promise<string> {
   return invoke("save_asset", bytes, { headers: { name: encodeURIComponent(name) } });
+}
+
+/** A paper in the user's Zotero library. */
+export type ZoteroItem = {
+  /** Its key in the user's own library (`ABCD2345`), or `groups/<group id>/<key>` in a group's. */
+  id: string;
+  title: string;
+  /** Its authors' last names, in order. */
+  authors: string[];
+  year: number | null;
+  /** Zotero's item type, like `journalArticle` (`attachment` for a PDF on its own). */
+  kind: string;
+  /** Whether it has a PDF. */
+  pdf: boolean;
+};
+
+export type ZoteroCollection = {
+  key: string;
+  name: string;
+  /** The collection it's in, if it's inside another. */
+  parent: string | null;
+  /** Its papers' ids. */
+  items: string[];
+};
+
+export type ZoteroLibrary = {
+  /** The user's own library first, then group libraries: their collections and every paper, by title. */
+  libraries: {
+    /** `user` for the user's own library, `groups/<group id>` for a group's. */
+    id: string;
+    name: string;
+    collections: ZoteroCollection[];
+    items: ZoteroItem[];
+  }[];
+};
+
+/**
+ * What's hidden in the sidebar's Library, in the open workspace: libraries by id (`user`,
+ * `groups/77`), collections as `<library id>/collections/<key>`.
+ */
+export function getHiddenInLibrary(): Promise<string[]> {
+  return invoke("get_hidden_in_library");
+}
+
+export function saveHiddenInLibrary(hidden: string[]): Promise<void> {
+  return invoke("save_hidden_in_library", { hidden });
+}
+
+/**
+ * Shows or hides the window's buttons (close, minimise, zoom; on a Mac). With `fade`, like the
+ * floating sidebar they're part of: they fade in once it's slid in (after 200ms), and out as it
+ * starts to leave; without, they just show or hide.
+ */
+export function showWindowButtons(shown: boolean, fade = false): Promise<void> {
+  return invoke("show_window_buttons", { shown, fade });
+}
+
+/** The sidebar's width (pixels), and the share of its height the Files section has. */
+export type SidebarSizes = { width: number; filesShare: number };
+
+/** The sidebar's sizes, the same in every workspace. */
+export function getSidebarSizes(): Promise<SidebarSizes> {
+  return invoke("get_sidebar_sizes");
+}
+
+export function saveSidebarSizes(sizes: SidebarSizes): Promise<void> {
+  return invoke("save_sidebar_sizes", { sizes });
+}
+
+/** The user's Zotero library, or null if Zotero isn't on this computer. */
+export function zoteroLibrary(): Promise<ZoteroLibrary | null> {
+  return invoke("zotero_library");
+}
+
+/** A Zotero paper's PDF (the paper's id), as raw bytes. */
+export function readZoteroPdf(id: string): Promise<ArrayBuffer> {
+  return invoke("read_zotero_pdf", { id });
 }
 
 /** A file in the workspace, as bytes (for images in the editor, and the PDF reader). */

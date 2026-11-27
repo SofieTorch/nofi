@@ -58,6 +58,33 @@ struct SettingsData {
     recent_workspaces: Vec<PathBuf>,
     #[serde(default)]
     editor: EditorSettings,
+    #[serde(default)]
+    sidebar: SidebarSizes,
+}
+
+/// The sidebar's width (in pixels), and the share of its height the Files section has when the
+/// Library is open too. The same in every workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SidebarSizes {
+    pub width: f64,
+    pub files_share: f64,
+}
+
+impl Default for SidebarSizes {
+    fn default() -> Self {
+        Self { width: 256.0, files_share: 0.5 }
+    }
+}
+
+pub fn sidebar_sizes(settings: &Settings) -> SidebarSizes {
+    settings.load().sidebar
+}
+
+pub fn save_sidebar_sizes(settings: &Settings, sizes: &SidebarSizes) -> std::io::Result<()> {
+    let mut data = settings.load();
+    data.sidebar = *sizes;
+    settings.save(&data)
 }
 
 /// How the editor behaves, in every workspace.

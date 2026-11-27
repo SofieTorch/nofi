@@ -1,4 +1,4 @@
-import { mdiTuneVariant } from "@mdi/js";
+import { mdiExportVariant, mdiTuneVariant } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api";
 import { IconButton } from "../ui/IconButton";
@@ -16,13 +16,15 @@ type Props = {
   onJump: (position: number) => void;
   /** Replaces the note's text, e.g. after a page setting changed. */
   onChangeText: (text: string) => void;
+  /** Exports the note as a PDF. */
+  onExport?: () => void;
 };
 
 /**
  * The note drawn as real pages by Typst, like the PDF it would become. Redrawn as you type; if
  * the note has a mistake, the last good pages stay up with the mistake explained above them.
  */
-export function PagesPane({ text, path, onJump, onChangeText }: Props) {
+export function PagesPane({ text, path, onJump, onChangeText, onExport }: Props) {
   const [pages, setPages] = useState<api.PagePicture[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [mistake, setMistake] = useState<string>();
@@ -65,7 +67,8 @@ export function PagesPane({ text, path, onJump, onChangeText }: Props) {
   return (
     <section aria-label="Pages" className="relative h-full overflow-auto bg-neutral-100">
       <div className="sticky top-0 z-10">
-        <div className="flex justify-end px-2 pt-2" data-page-settings-button>
+        <div className="flex justify-end gap-1 px-2 pt-2" data-page-settings-button>
+          {onExport && <IconButton icon={mdiExportVariant} label="Export as PDF" onClick={onExport} />}
           <IconButton
             icon={mdiTuneVariant}
             label="Page settings"

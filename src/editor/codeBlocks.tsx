@@ -3,8 +3,8 @@
 // button. The code is highlighted with CodeMirror's parser for that language, loaded when first used.
 
 import { languages } from "@codemirror/language-data";
-import { type EditorState, type Range as Ranged, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
+import { EditorSelection, type EditorState, Prec, type Range as Ranged, StateEffect, StateField } from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView, keymap, ViewPlugin, WidgetType } from "@codemirror/view";
 import { classHighlighter, highlightTree } from "@lezer/highlight";
 import type { Parser } from "@lezer/common";
 import { LanguageDescription } from "@codemirror/language";
@@ -400,6 +400,8 @@ function decorateBlock(state: EditorState, text: string, block: Span, format: Fo
     const classes = ["cm-codeblock"];
     if (collapsed && (number === fenceLine || number === closingLine)) classes.push("cm-codeblock-fence");
     if (number === first) classes.push("cm-codeblock-start");
+    // (Below the corner's language and buttons, in a strip of their own above the code.)
+    if (number === first && !editing) classes.push("cm-codeblock-below-corner");
     if (number === last) classes.push("cm-codeblock-end");
     const line = number - fenceLine;
     const isCode = number > fenceLine && number < closingLine;
@@ -443,6 +445,34 @@ const loader = (format: Format) =>
     };
   });
 
+/**
+ * ↑ and ↓ (with Shift, selecting) inside a code block: to the line above or below in the code,
+ * at the same column, or the end of a shorter line, coming back to the column after. (The
+ * browser's own way measures the screen, and the box's hidden fences and corner can throw it off.)
+ * At the code's first or last line, it's left to the editor, to leave the block.
+ */
+function moveInCode(format: Format, up: boolean, extend: boolean) {
+  return (view: EditorView) => {
+    const { state } = view;
+    const range = state.selection.main;
+    const line = state.doc.lineAt(range.head);
+    const target = up ? line.number - 1 : line.number + 1;
+    if (target < 1 || target > state.doc.lines) return false;
+    const block = findFormatting(state.doc.toString(), format).find(
+      (span) => span.kind === "codeblock" && span.markers[0].to < line.from && line.to < span.markers[1].from,
+    );
+    if (!block) return false;
+    const next = state.doc.line(target);
+    // (Only from code line to code line: not onto the fences.)
+    if (next.from <= block.markers[0].to || next.to >= block.markers[1].from) return false;
+    const column = range.goalColumn ?? range.head - line.from;
+    const head = next.from + Math.min(column, next.length);
+    const moved = extend ? EditorSelection.range(range.anchor, head, column) : EditorSelection.cursor(head, 0, undefined, column);
+    view.dispatch({ selection: EditorSelection.create([moved]), scrollIntoView: true, userEvent: "select" });
+    return true;
+  };
+}
+
 export function codeBlocks(format: Format) {
   const field = StateField.define<DecorationSet>({
     create: (state) => decorate(state, format),
@@ -452,7 +482,13 @@ export function codeBlocks(format: Format) {
         : decorations,
     provide: (f) => EditorView.decorations.from(f),
   });
-  return [field, loader(format), theme];
+  const arrows = Prec.high(
+    keymap.of([
+      { key: "ArrowUp", run: moveInCode(format, true, false), shift: moveInCode(format, true, true) },
+      { key: "ArrowDown", run: moveInCode(format, false, false), shift: moveInCode(format, false, true) },
+    ]),
+  );
+  return [field, loader(format), arrows, theme];
 }
 
 const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -468,6 +504,8 @@ const theme = EditorView.theme({
   },
   // The same room above and below the code as on its sides.
   ".cm-line.cm-codeblock-start": { borderTopLeftRadius: "8px", borderTopRightRadius: "8px", paddingTop: "1.1em !important" },
+  // Room for the corner's strip above the code: as tall as a line, and a little more.
+  ".cm-line.cm-codeblock-start.cm-codeblock-below-corner": { paddingTop: "2.35em !important" },
   ".cm-line.cm-codeblock-end": { borderBottomLeftRadius: "8px", borderBottomRightRadius: "8px", paddingBottom: "1.1em !important" },
   // Collapsed fence lines: no room taken; the opening one holds the corner, over the first code line.
   ".cm-line.cm-codeblock-fence": {
@@ -479,10 +517,10 @@ const theme = EditorView.theme({
   },
   // Placed against the (collapsed) fence line, so it sits in the box's top-right corner.
   ".cm-codeblock-corner": { position: "static" },
-  // Level with the first line of code: as far down as the box's padding, and as tall as a line.
+  // In a strip of its own at the top of the box, above the first line of code (never over it).
   ".cm-codeblock-header": {
     position: "absolute",
-    top: "1.1em",
+    top: "0.45em",
     right: "0.85em",
     height: "1.6em",
     zIndex: "5",
@@ -534,6 +572,7 @@ const theme = EditorView.theme({
   ".cm-line.cm-codeblock:hover .cm-codeblock-number-on-hover": { opacity: "1" },
   // The first line has the box's top padding above its code.
   ".cm-line.cm-codeblock-start .cm-codeblock-number-on-hover": { top: "1.1em" },
+  ".cm-line.cm-codeblock-start.cm-codeblock-below-corner .cm-codeblock-number-on-hover": { top: "2.35em" },
   ".cm-line.cm-codeblock.cm-codeblock-highlighted": { background: "#fff3bf" },
   ".cm-codeblock-menu": {
     position: "absolute",

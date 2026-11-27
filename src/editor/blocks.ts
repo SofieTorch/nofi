@@ -40,7 +40,7 @@ export function findBlocks(text: string, format: Format): Block[] {
   const isSkipped = (line: Line) => skipped.some((r) => line.from >= r.from && line.from < Math.max(r.to, r.from + 1));
 
   const heading = typst ? /^=+ / : /^#{1,6} /;
-  const list = typst ? /^(\s*)([-+]|\/) / : /^(\s*)([-*+]|\d+\.) /;
+  const list = typst ? /^(\s*)([-+]|\d+\.|\/) / : /^(\s*)([-*+]|\d+\.) /;
   const fence = /^\s*```/;
   const startsAnother = (line: Line) =>
     heading.test(line.text) ||

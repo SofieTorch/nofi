@@ -20,6 +20,24 @@ mod drawing_pages {
         assert!(pages[0].svg.starts_with("<svg"));
     }
 
+    /// Every `&` in a page's SVG starts an entity (`&amp;`…): a bare one makes it unreadable, and the page blank.
+    fn readable(svg: &str) -> bool {
+        svg.match_indices('&').all(|(at, _)| {
+            let rest = &svg[at..];
+            ["&amp;", "&lt;", "&gt;", "&quot;", "&apos;", "&#"].iter().any(|entity| rest.starts_with(entity))
+        })
+    }
+
+    #[test]
+    fn a_link_with_an_ampersand_still_makes_a_readable_page() {
+        let note = "Ray is fast.#footnote[#link(\"zotero:AGNKN64H#page=3&quote=Ray%20is\")[Moritz et al., 2018, p. 3]]\n\nSee #link(\"attention.pdf#page=3&quote=a\")[p. 3] & more.";
+
+        let pages = render_pages(note).unwrap().pictures();
+
+        assert!(readable(&pages[0].svg));
+        assert!(pages[0].svg.contains("href=\"zotero:AGNKN64H#page=3&amp;quote=Ray%20is\""));
+    }
+
     /// Typst's default page is A4: 595 × 842 points.
     #[test]
     fn pages_are_a4_unless_the_note_says_otherwise() {
@@ -153,5 +171,73 @@ mod remembering_the_page_view {
 
         assert!(load_show_pages(workspace.path()));
         assert_eq!(load_explorer_layout(workspace.path()), on_the_right);
+    }
+}
+
+mod exporting_a_pdf {
+    use super::*;
+
+    /// How many pages a PDF has: its page objects (`/Type /Page`, not the tree's `/Type /Pages`).
+    fn page_count(pdf: &[u8]) -> usize {
+        let text = String::from_utf8_lossy(pdf).replace(' ', "");
+        text.matches("/Type/Page").count() - text.matches("/Type/Pages").count()
+    }
+
+    #[test]
+    fn a_note_becomes_a_pdf_file() {
+        let pdf = render_pages("= Ideas\nRead more papers.").unwrap().pdf().unwrap();
+
+        assert!(pdf.starts_with(b"%PDF-"));
+        assert_eq!(page_count(&pdf), 1);
+    }
+
+    #[test]
+    fn the_pdf_has_the_same_pages_as_the_page_view() {
+        let note = "Some words to fill the page. ".repeat(1000);
+        let pages = render_pages(&note).unwrap();
+
+        assert_eq!(page_count(&pages.pdf().unwrap()), pages.pictures().len());
+    }
+
+    #[test]
+    fn it_is_saved_where_asked() {
+        let folder = TempDir::new().unwrap();
+        let destination = folder.path().join("Paper.pdf");
+
+        render_pages("Hello").unwrap().save_pdf(&destination).unwrap();
+
+        assert!(std::fs::read(&destination).unwrap().starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn an_older_export_is_replaced() {
+        let folder = TempDir::new().unwrap();
+        let destination = folder.path().join("Paper.pdf");
+        std::fs::write(&destination, "old").unwrap();
+
+        render_pages("Hello").unwrap().save_pdf(&destination).unwrap();
+
+        assert!(std::fs::read(&destination).unwrap().starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn a_folder_that_isnt_there_is_explained() {
+        let folder = TempDir::new().unwrap();
+
+        let error = render_pages("Hello").unwrap().save_pdf(&folder.path().join("Gone/Paper.pdf")).unwrap_err();
+
+        assert!(error.starts_with("Couldn't save the PDF"), "{error}");
+    }
+
+    #[test]
+    fn a_note_with_a_mistake_isnt_exported() {
+        assert_eq!(render_pages("Hello\n#unknown").unwrap_err(), "Line 2: Unknown variable: unknown.");
+    }
+
+    #[test]
+    fn the_title_set_in_the_note_is_the_pdfs_title() {
+        let pdf = render_pages("#set document(title: \"Attention\")\nHello").unwrap().pdf().unwrap();
+
+        assert!(String::from_utf8_lossy(&pdf).contains("Attention"));
     }
 }

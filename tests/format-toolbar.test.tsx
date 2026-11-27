@@ -128,6 +128,49 @@ describe("The format toolbar", () => {
   });
 });
 
+describe("Inside code", () => {
+  const WITH_CODE = "Some text.\n```python\ndef greet(name):\n    return name\n```\nAfter, with `inline code` too.";
+
+  it("there's no format toolbar for a selection in a code block: code has no styles", async () => {
+    notes["Paper.typ"] = WITH_CODE;
+    const view = await openNote();
+
+    select(view, "greet(name)");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("toolbar", { name: "Format" })).not.toBeInTheDocument();
+  });
+
+  it("nor for a selection in inline code", async () => {
+    notes["Paper.typ"] = WITH_CODE;
+    const view = await openNote();
+
+    select(view, "inline");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("toolbar", { name: "Format" })).not.toBeInTheDocument();
+  });
+
+  it("the style shortcuts do nothing there", async () => {
+    notes["Paper.typ"] = WITH_CODE;
+    const view = await openNote();
+    select(view, "greet");
+
+    await userEvent.keyboard("{Control>}b{/Control}");
+
+    expect(text(view)).toBe(WITH_CODE);
+  });
+
+  it("a selection reaching past the code still gets the toolbar", async () => {
+    notes["Paper.typ"] = WITH_CODE;
+    const view = await openNote();
+
+    select(view, "After, with");
+
+    expect(await toolbar()).toBeInTheDocument();
+  });
+});
+
 describe("Style shortcuts", () => {
   it("⌘B (Ctrl+B on Windows and Linux) makes the selection bold, and again removes it", async () => {
     const view = await openNote();

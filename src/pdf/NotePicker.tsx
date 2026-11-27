@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { fuzzyScore } from "../ui/fuzzy";
 
 /** A note to put it in (its path), or a new source note. */
-export type Choice = { note: string } | { newNote: true };
+/** A note chosen, or a new source note (at a path, if one was chosen for it). */
+export type Choice = { note: string } | { newNote: true; at?: string };
 
 type Option = { label: string; detail?: string; choice: Choice };
 

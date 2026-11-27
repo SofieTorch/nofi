@@ -25,7 +25,7 @@ beforeEach(() => {
 
 async function createANote() {
   render(<App />);
-  await screen.findByRole("heading", { name: "Research Notes" });
+  await screen.findByRole("heading", { name: "Research Notes", hidden: true });
   await chooseInMenu("File › New Note");
   return nameField();
 }

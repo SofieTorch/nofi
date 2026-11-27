@@ -178,7 +178,12 @@ fn resolve(from: &str, address: &str, markdown: bool) -> Option<String> {
 }
 
 /// The file an address points to, as a workspace path (without its part, after the #).
+/// A Zotero paper's address (`zotero:<id>`, maybe with a part) is the paper itself, `zotero:<id>`.
 fn resolve_file(from: &str, address: &str, markdown: bool) -> Option<String> {
+    if let Some(id) = address.strip_prefix("zotero:") {
+        let id = id.split('#').next().unwrap_or("");
+        return (!id.is_empty()).then(|| format!("zotero:{id}"));
+    }
     let has_scheme = address.split_once(':').is_some_and(|(scheme, _)| {
         !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
     });

@@ -123,6 +123,29 @@ mod finding_links_between_notes {
     }
 
     #[test]
+    fn finds_the_notes_that_link_to_a_zotero_paper() {
+        let workspace = workspace_with(&[
+            ("gpt3 notes.typ", "#link(\"zotero:GPT30001#page=3&quote=All\")[p. 3]"),
+            ("Ideas.md", "[paper](zotero:GPT30001)"),
+            ("Group.typ", "#link(\"zotero:groups/77/UNIPAPER#page=1&point=10,20\")[p. 1]"),
+            ("Other.typ", "#link(\"zotero:BERT2018\")[other]"),
+        ]);
+
+        let mut found = notes_linking_to(workspace.path(), "zotero:GPT30001");
+        found.sort();
+
+        assert_eq!(found, vec!["Ideas.md".to_string(), "gpt3 notes.typ".to_string()]);
+        assert_eq!(notes_linking_to(workspace.path(), "zotero:groups/77/UNIPAPER"), vec!["Group.typ".to_string()]);
+    }
+
+    #[test]
+    fn a_note_whose_source_property_names_a_zotero_paper_links_to_it() {
+        let workspace = workspace_with(&[("gpt3 notes.typ", "#metadata((\n  source: \"zotero:GPT30001\",\n)) <properties>\n\nNothing yet.")]);
+
+        assert_eq!(notes_linking_to(workspace.path(), "zotero:GPT30001"), vec!["gpt3 notes.typ".to_string()]);
+    }
+
+    #[test]
     fn a_note_whose_source_property_names_a_pdf_links_to_it() {
         let workspace = workspace_with(&[
             ("Papers/attention notes.typ", "#metadata((\n  source: \"attention.pdf\",\n  year: 2017,\n)) <properties>\n\nNothing yet."),

@@ -7,7 +7,7 @@ import type { EditorView } from "@codemirror/view";
 import type { Format } from "./formatting";
 
 const ITEM = {
-  typst: /^(\s*)([-+])( +)(\[[ xX]\] +)?/,
+  typst: /^(\s*)([-+]|\d+\.)( +)(\[[ xX]\] +)?/,
   markdown: /^(\s*)([-*+]|\d+[.)])( +)(\[[ xX]\] +)?/,
 };
 

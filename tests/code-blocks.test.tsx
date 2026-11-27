@@ -108,6 +108,61 @@ describe("Code blocks", () => {
   });
 });
 
+// ↑ and ↓ inside a code block go line by line through the code, keeping the column (the browser's
+// own way, which measures the screen, can be thrown off by the box's hidden fence lines).
+describe("Moving through code with the arrows", () => {
+  const LINES = "Before.\n```python\nfirst = 1\nsecond_line = 22\nx\nlast = 4\n```\nAfter.";
+  async function cursorAt(part: string, offset = 0) {
+    notes["Paper.typ"] = LINES;
+    const editor = await openNote();
+    const view = EditorView.findFromDOM(editor)!;
+    act(() => {
+      view.focus();
+      view.dispatch({ selection: { anchor: LINES.indexOf(part) + offset } });
+    });
+    return view;
+  }
+  const where = (view: EditorView) => {
+    const head = view.state.selection.main.head;
+    const line = view.state.doc.lineAt(head);
+    return `${line.text}|${head - line.from}`;
+  };
+
+  it("↑ goes to the line above in the code, at the same column", async () => {
+    const view = await cursorAt("second_line", 6);
+
+    await userEvent.keyboard("{ArrowUp}");
+
+    expect(where(view)).toBe("first = 1|6");
+  });
+
+  it("↓ goes to the line below in the code", async () => {
+    const view = await cursorAt("first", 3);
+
+    await userEvent.keyboard("{ArrowDown}");
+
+    expect(where(view)).toBe("second_line = 22|3");
+  });
+
+  it("a shorter line on the way: the cursor stops at its end, and comes back to its column after", async () => {
+    const view = await cursorAt("second_line", 10);
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(where(view)).toBe("x|1");
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(where(view)).toBe("last = 4|8");
+  });
+
+  it("with Shift, the selection grows line by line", async () => {
+    const view = await cursorAt("x");
+
+    await userEvent.keyboard("{Shift>}{ArrowUp}{/Shift}");
+
+    expect(view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)).toBe("second_line = 22\n");
+  });
+});
+
 describe("The language menu", () => {
   async function openMenu(editor: HTMLElement) {
     await userEvent.click(within(editor).getByRole("button", { name: "Language" }));

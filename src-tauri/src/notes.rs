@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use crate::workspace::APP_DATA_DIR;
 
 const ALL_FORMATS: [NoteFormat; 2] = [NoteFormat::Typst, NoteFormat::Markdown];
 
@@ -28,16 +29,24 @@ impl NoteFormat {
 
 /// Creates an empty note at the top of the workspace and returns its path relative to the workspace.
 pub fn create_note(workspace: &Path, format: NoteFormat) -> io::Result<String> {
+    create_note_in(workspace, format, "")
+}
+
+/// Creates an empty "Untitled" note (or "Untitled 2"…) in a folder of the workspace ("" for its
+/// top), and returns its path.
+pub fn create_note_in(workspace: &Path, format: NoteFormat, folder: &str) -> io::Result<String> {
+    let place = if folder.is_empty() { Some(workspace.to_path_buf()) } else { inside(workspace, folder) };
+    let place = place.filter(|p| p.is_dir()).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "That folder isn't there anymore."))?;
     for number in 1.. {
         let name = if number == 1 { "Untitled".to_string() } else { format!("Untitled {number}") };
         // A name is taken if a note in any format already uses it.
-        if ALL_FORMATS.iter().any(|f| workspace.join(format!("{name}.{}", f.extension())).exists()) {
+        if ALL_FORMATS.iter().any(|f| place.join(format!("{name}.{}", f.extension())).exists()) {
             continue;
         }
         let file_name = format!("{name}.{}", format.extension());
         // `create_new` fails instead of overwriting if the file appeared in the meantime.
-        match OpenOptions::new().write(true).create_new(true).open(workspace.join(&file_name)) {
-            Ok(_) => return Ok(file_name),
+        match OpenOptions::new().write(true).create_new(true).open(place.join(&file_name)) {
+            Ok(_) => return Ok(if folder.is_empty() { file_name } else { format!("{folder}/{file_name}") }),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
         }
@@ -171,7 +180,7 @@ pub fn rename_note(workspace: &Path, note: &str, new_name: &str) -> Result<Strin
 }
 
 /// Where a note's relative path points, or None if it would point outside the workspace.
-fn inside(workspace: &Path, note: &str) -> Option<PathBuf> {
+pub(crate) fn inside(workspace: &Path, note: &str) -> Option<PathBuf> {
     let relative = Path::new(note);
     // Only plain names: no "..", so nothing outside the workspace can be touched.
     let plain = relative.components().all(|c| matches!(c, Component::Normal(_)));
@@ -225,6 +234,10 @@ pub fn read_note(workspace: &Path, note: &str) -> Result<String, NoteError> {
 pub fn save_note(workspace: &Path, note: &str, contents: &str) -> Result<(), NoteError> {
     let path = inside(workspace, note).ok_or(NoteError::NotFound)?;
     let folder = path.parent().ok_or(NoteError::NotFound)?;
+    // (The app's own files, like a Zotero paper's annotations, go in folders made as needed.)
+    if note.starts_with(&format!("{APP_DATA_DIR}/")) {
+        fs::create_dir_all(folder)?;
+    }
     let file_name = path.file_name().ok_or(NoteError::NotFound)?.to_string_lossy();
     let temporary = folder.join(format!(".{file_name}.saving"));
     fs::write(&temporary, contents)?;

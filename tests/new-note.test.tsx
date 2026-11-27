@@ -16,7 +16,7 @@ beforeEach(() => {
 
 async function renderOpenWorkspace() {
   render(<App />);
-  await screen.findByRole("heading", { name: "Research Notes" });
+  await screen.findByRole("heading", { name: "Research Notes", hidden: true });
 }
 
 /** After a note is created, the backend lists it along with what was there before. */

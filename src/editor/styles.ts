@@ -422,7 +422,7 @@ const LINE_STARTS: Record<Format, { pattern: RegExp; type: (match: RegExpExecArr
     { pattern: /^(=+) /, type: (m) => `heading-${Math.min(m[1].length, 3)}` as BlockType },
     { pattern: /^(\s*)- \[[ xX]\] /, type: () => "to-do-list" },
     { pattern: /^(\s*)- /, type: () => "bulleted-list" },
-    { pattern: /^(\s*)\+ /, type: () => "numbered-list" },
+    { pattern: /^(\s*)(?:\+|\d+\.) /, type: () => "numbered-list" },
   ],
   markdown: [
     { pattern: /^(#{1,6}) /, type: (m) => `heading-${Math.min(m[1].length, 3)}` as BlockType },
@@ -522,19 +522,57 @@ export function turnInto(text: string, format: Format, selection: Range, type: B
   return rewriteLines(text, selection, region, inner, newStart);
 }
 
+const isItem = (format: Format, line: string) => lineStart(format, line).type.endsWith("list");
+const spacesOf = (line: string) => /^[ \t]*/.exec(line)![0].length;
+const lineEndAt = (text: string, from: number) => (text.indexOf("\n", from) + 1 || text.length + 1) - 1;
+
 /**
- * Indents the lines the selection is on, or brings them back: list items are nested (two spaces),
- * other text is padded (#pad(left: 2em)[…], 2em more each time).
+ * Nests list items (`lines`) under the item above, their text in line with its text, or brings
+ * them out to their parent's level. What's nested under them goes with them. Null if they can't go
+ * further (the first item, or already a level below the item above).
+ */
+function nestItems(text: string, format: Format, selection: Range, lines: Range, direction: "in" | "out"): StyleEdit | null {
+  const selected = text.slice(lines.from, lines.to).split("\n");
+  const spaces = Math.min(...selected.map(spacesOf));
+  // The items above, closest first, until the list's start (a line of text at the left).
+  const above: string[] = [];
+  for (const line of text.slice(0, lines.from).split("\n").slice(0, -1).reverse()) {
+    if (isItem(format, line)) above.push(line);
+    else if (line.trim() !== "" && !/^\s/.test(line)) break;
+  }
+  let to: number;
+  if (direction === "in") {
+    const sibling = above.find((line) => spacesOf(line) <= spaces);
+    // Where its text starts (a to-do's box is part of its text, as in Markdown).
+    to = sibling ? /^\s*(?:[-*+]|\d+\.) +/.exec(sibling)![0].length : -1;
+    if (to <= spaces) return null;
+  } else {
+    if (spaces === 0) return null;
+    const parent = above.find((line) => spacesOf(line) < spaces);
+    to = parent ? spacesOf(parent) : 0;
+  }
+  // What's nested under the last selected line goes with it.
+  let end = lines.to;
+  while (end < text.length) {
+    const next = text.slice(end + 1, lineEndAt(text, end + 1));
+    if (next.trim() === "" || spacesOf(next) <= spaces) break;
+    end = end + 1 + next.length;
+  }
+  const change = to - spaces;
+  return rewriteLines(text, selection, { from: lines.from, to: end }, { from: lines.from, to: end }, (line) => {
+    if (line.trim() === "") return { old: 0, start: "" };
+    return change > 0 ? { old: 0, start: " ".repeat(change) } : { old: Math.min(-change, spacesOf(line)), start: "" };
+  });
+}
+
+/**
+ * Indents the lines the selection is on, or brings them back: list items are nested under the
+ * item above, other text is padded (#pad(left: 2em)[…], 2em more each time).
  */
 export function indent(text: string, format: Format, selection: Range, direction: "in" | "out"): StyleEdit | null {
   const lines = wholeLines(text, selection);
   const all = text.slice(lines.from, lines.to).split("\n");
-  if (all.every((line) => lineStart(format, line).type.endsWith("list"))) {
-    if (direction === "out" && !all.every((line) => line.startsWith("  "))) return null;
-    return rewriteLines(text, selection, lines, lines, () =>
-      direction === "in" ? { old: 0, start: "  " } : { old: 2, start: "" },
-    );
-  }
+  if (all.every((line) => isItem(format, line))) return nestItems(text, format, selection, lines, direction);
   if (format !== "typst") return null;
   const pad = spansAround(text, format, selection).filter((span) => span.kind === "indent").pop();
   const amount = pad ? Number.parseFloat(setting(pad.args, "left") ?? "0") : 0;

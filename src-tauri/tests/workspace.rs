@@ -347,3 +347,36 @@ mod editor_settings {
         assert_eq!(restore_last_workspace(&settings_in(&dir)).unwrap().path, folder.path());
     }
 }
+
+/// The sidebar's width and how its height is shared between its sections: the same in every
+/// workspace.
+mod sidebar_sizes {
+    use super::*;
+
+    #[test]
+    fn the_sidebar_starts_256_pixels_wide_shared_evenly() {
+        let dir = TempDir::new().unwrap();
+
+        assert_eq!(sidebar_sizes(&settings_in(&dir)), SidebarSizes { width: 256.0, files_share: 0.5 });
+    }
+
+    #[test]
+    fn a_change_is_remembered_in_every_workspace() {
+        let dir = TempDir::new().unwrap();
+        let wider = SidebarSizes { width: 340.0, files_share: 0.3 };
+
+        save_sidebar_sizes(&settings_in(&dir), &wider).unwrap();
+
+        assert_eq!(sidebar_sizes(&settings_in(&dir)), wider);
+    }
+
+    #[test]
+    fn other_settings_are_kept() {
+        let dir = TempDir::new().unwrap();
+        save_editor_settings(&settings_in(&dir), &EditorSettings { block_handles: false, ..Default::default() }).unwrap();
+
+        save_sidebar_sizes(&settings_in(&dir), &SidebarSizes { width: 300.0, files_share: 0.5 }).unwrap();
+
+        assert!(!editor_settings(&settings_in(&dir)).block_handles);
+    }
+}

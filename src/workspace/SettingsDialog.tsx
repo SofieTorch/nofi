@@ -1,16 +1,22 @@
 import { mdiClose } from "@mdi/js";
 import { useEffect, useId, useRef } from "react";
-import type { BoardBackground, EditorSettings } from "../api";
+import type { EditorSettings, ExplorerLayout } from "../api";
 import { IconButton } from "../ui/IconButton";
 
 type Props = {
   settings: EditorSettings;
   onChange: (settings: EditorSettings) => void;
+  /** The open workspace's sidebar side (kept for that workspace). */
+  sidebarSide: ExplorerLayout["side"];
+  onSidebarSideChange: (side: ExplorerLayout["side"]) => void;
   onClose: () => void;
 };
 
-/** Settings for how the app behaves in every workspace, in a floating card over the window. */
-export function SettingsDialog({ settings, onChange, onClose }: Props) {
+/**
+ * Settings for how the app behaves in every workspace, and for the open workspace, in a floating
+ * card over the window.
+ */
+export function SettingsDialog({ settings, onChange, sidebarSide, onSidebarSideChange, onClose }: Props) {
   const card = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,6 +62,16 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           value={settings.boardBackground}
           onChange={(boardBackground) => onChange({ ...settings, boardBackground })}
         />
+        <h3 className="mt-3 mb-1 text-xs font-medium tracking-wide text-neutral-500 uppercase">This workspace</h3>
+        <Choice
+          label="Sidebar"
+          options={[
+            { value: "left", label: "Left" },
+            { value: "right", label: "Right" },
+          ]}
+          value={sidebarSide}
+          onChange={onSidebarSideChange}
+        />
       </div>
     </div>
   );
@@ -99,16 +115,16 @@ function Toggle({
 }
 
 /** One of a few options, side by side (like a segmented control). */
-function Choice({
+function Choice<Value extends string>({
   label,
   options,
   value,
   onChange,
 }: {
   label: string;
-  options: { value: BoardBackground; label: string }[];
-  value: BoardBackground;
-  onChange: (value: BoardBackground) => void;
+  options: { value: Value; label: string }[];
+  value: Value;
+  onChange: (value: Value) => void;
 }) {
   const id = useId();
   return (

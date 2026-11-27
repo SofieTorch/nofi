@@ -4,7 +4,7 @@ type Props = {
   /** Material Design icon path, from @mdi/js. */
   icon: string;
   label: string;
-  onClick: () => void;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   /** For toggle buttons: whether the option is currently on. */
   pressed?: boolean;
 };

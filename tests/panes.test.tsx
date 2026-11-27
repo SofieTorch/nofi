@@ -4,6 +4,8 @@
 // are no empty panes: a pane goes with its last tab, or with "Close pane". The line between panes
 // can be dragged to resize them. A note is open in one pane at most. How panes are arranged is
 // specified in pane-layout.test.ts. (Notes here are kept open, not previews: see preview-tabs.test.tsx.)
+// A tab's right-click menu closes it, the pane's other tabs, those to its right or left, or all of
+// them. ⌘W closes the shown tab, and with no tab open, the window.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -327,5 +329,111 @@ describe("From the command palette", () => {
     await userEvent.keyboard("close tab{Enter}");
 
     expect(shape()).toEqual([[]]);
+  });
+});
+
+describe("Closing tabs", () => {
+  /** Right-clicks a tab, and chooses in its menu. */
+  async function inTabMenu(tab: string, item: string) {
+    fireEvent.contextMenu(screen.getByRole("tab", { name: tab }), { clientX: 120, clientY: 40 });
+    await userEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: item }));
+  }
+  async function threeTabs() {
+    await start();
+    await open("Paper.typ");
+    await open("Ideas.md");
+    await open("Plan.typ");
+  }
+
+  it("a tab's right-click menu offers to close it, the others, those to its right or left, or all", async () => {
+    await threeTabs();
+
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Ideas" }), { clientX: 120, clientY: 40 });
+
+    const items = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent);
+    expect(items.slice(0, 5)).toEqual(["Close", "Close Others", "Close to the Right", "Close to the Left", "Close All"]);
+  });
+
+  it("Close closes that tab", async () => {
+    await threeTabs();
+
+    await inTabMenu("Paper", "Close");
+
+    expect(shape()).toEqual([["Ideas", "[Plan]"]]);
+  });
+
+  it("Close Others leaves only that tab, shown", async () => {
+    await threeTabs();
+
+    await inTabMenu("Ideas", "Close Others");
+
+    expect(shape()).toEqual([["[Ideas]"]]);
+  });
+
+  it("Close to the Right closes the tabs after it; it's shown if the shown one went", async () => {
+    await threeTabs();
+
+    await inTabMenu("Paper", "Close to the Right");
+
+    expect(shape()).toEqual([["[Paper]"]]);
+  });
+
+  it("Close to the Left closes the tabs before it, the shown one staying shown", async () => {
+    await threeTabs();
+
+    await inTabMenu("Ideas", "Close to the Left");
+
+    expect(shape()).toEqual([["Ideas", "[Plan]"]]);
+  });
+
+  it("Close All closes every tab in the pane", async () => {
+    await threeTabs();
+
+    await inTabMenu("Ideas", "Close All");
+
+    expect(shape()).toEqual([[]]);
+  });
+
+  it("only that pane's tabs are closed; a pane left empty closes", async () => {
+    await threeTabs();
+    await dragNote("Paper.typ", "right");
+
+    fireEvent.contextMenu(within(panes()[1]).getByRole("tab", { name: "Paper" }), { clientX: 120, clientY: 40 });
+    await userEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Close All" }));
+
+    expect(shape()).toEqual([["Ideas", "[Plan]"]]);
+  });
+
+  it("what would close nothing can't be chosen", async () => {
+    await start();
+    await open("Paper.typ");
+
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Paper" }), { clientX: 120, clientY: 40 });
+    const menu = await screen.findByRole("menu");
+
+    expect(within(menu).getByRole("menuitem", { name: "Close Others" })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: "Close to the Right" })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: "Close to the Left" })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeEnabled();
+  });
+
+  it("⌘W (File › Close Tab) closes the shown tab", async () => {
+    await threeTabs();
+
+    await chooseInMenu("File › Close Tab");
+
+    expect(shape()).toEqual([["Paper", "[Ideas]"]]);
+    expect(api.closeWindow).not.toHaveBeenCalled();
+  });
+
+  it("⌘W with no tab open closes the window", async () => {
+    await start();
+    await open("Paper.typ");
+    await chooseInMenu("File › Close Tab");
+    expect(shape()).toEqual([[]]);
+
+    await chooseInMenu("File › Close Tab");
+
+    expect(api.closeWindow).toHaveBeenCalled();
   });
 });

@@ -98,7 +98,7 @@ function insideCode(state: EditorState, format: Format, pos: number) {
  * styled text, the styles are closed before the break and opened again after it.
  */
 function newParagraph(format: Format) {
-  const listItem = format === "typst" ? /^\s*([-+]|\/) / : /^\s*([-*+]|\d+\.) /;
+  const listItem = format === "typst" ? /^\s*([-+]|\d+\.|\/) / : /^\s*([-*+]|\d+\.) /;
   return (view: EditorView) => {
     const { state } = view;
     const head = state.selection.main.head;

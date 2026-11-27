@@ -2,6 +2,7 @@ pub mod assets;
 pub mod completions;
 pub mod external;
 pub mod files;
+pub mod folders;
 pub mod layout;
 pub mod links;
 pub mod maths;
@@ -17,6 +18,7 @@ pub mod tables;
 mod typst_world;
 pub mod watch;
 pub mod workspace;
+pub mod zotero;
 
 use files::FileEntry;
 use layout::{ExplorerLayout, ExplorerMode};
@@ -133,8 +135,49 @@ fn save_explorer_layout(
 /// Creates an empty note at the top of the workspace (Typst unless another format is asked for)
 /// and returns its path relative to the workspace.
 #[tauri::command]
-fn create_note(current: State<CurrentWorkspace>, format: Option<NoteFormat>) -> Result<String, String> {
-    notes::create_note(&current.path()?, format.unwrap_or_default()).map_err(|e| e.to_string())
+fn create_note(current: State<CurrentWorkspace>, format: Option<NoteFormat>, folder: Option<String>) -> Result<String, String> {
+    notes::create_note_in(&current.path()?, format.unwrap_or_default(), folder.as_deref().unwrap_or("")).map_err(|e| e.to_string())
+}
+
+/// Creates an empty "New folder" in a folder ("" for the top); returns its path.
+#[tauri::command]
+fn create_folder(current: State<CurrentWorkspace>, parent: String) -> Result<String, folders::FileError> {
+    let workspace = current.path().map_err(folders::FileError::Io)?;
+    folders::create_folder(&workspace, &parent)
+}
+
+/// Gives a folder a new name; returns its new path.
+#[tauri::command]
+fn rename_folder(current: State<CurrentWorkspace>, path: String, new_name: String) -> Result<String, String> {
+    folders::rename_folder(&current.path()?, &path, &new_name).map_err(|e| folders::folder_rename_message(&e))
+}
+
+/// How many files are in a folder (in all its folders).
+#[tauri::command]
+fn files_in_folder(current: State<CurrentWorkspace>, path: String) -> Result<usize, folders::FileError> {
+    let workspace = current.path().map_err(folders::FileError::Io)?;
+    folders::files_in(&workspace, &path)
+}
+
+/// Deletes a folder and what's in it by sending it to the system's Trash.
+#[tauri::command]
+fn delete_folder(current: State<CurrentWorkspace>, path: String) -> Result<(), folders::FileError> {
+    let workspace = current.path().map_err(folders::FileError::Io)?;
+    folders::delete_folder_with(&workspace, &path, |folder| trash::delete(folder).map_err(|e| std::io::Error::other(e.to_string())))
+}
+
+/// Moves a file or folder into a folder; returns its new path.
+#[tauri::command]
+fn move_into(current: State<CurrentWorkspace>, path: String, folder: String) -> Result<String, folders::FileError> {
+    let workspace = current.path().map_err(folders::FileError::Io)?;
+    folders::move_into(&workspace, &path, &folder)
+}
+
+/// Copies a file or folder into a folder; returns the copy's path.
+#[tauri::command]
+fn copy_into(current: State<CurrentWorkspace>, path: String, folder: String) -> Result<String, folders::FileError> {
+    let workspace = current.path().map_err(folders::FileError::Io)?;
+    folders::copy_into(&workspace, &path, &folder)
 }
 
 /// The notes that link to a file (like a PDF, for its annotations).
@@ -253,6 +296,40 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Watches the Zotero library once it's been read, telling the window ("zotero-changed") when it
+/// changes, so it's always the same as in Zotero.
+#[derive(Default)]
+struct ZoteroWatcher(Mutex<Option<(PathBuf, Box<dyn std::any::Any + Send>)>>);
+
+/// The user's Zotero library (read from a copy of its database), or none if Zotero isn't on this
+/// computer. From then on, changes to it are told ("zotero-changed"). Async: reading it never
+/// blocks the window.
+#[tauri::command]
+async fn zotero_library(app: AppHandle, watcher: State<'_, ZoteroWatcher>) -> Result<Option<zotero::ZoteroLibrary>, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let Some(data) = zotero::find_zotero(&home) else { return Ok(None) };
+    {
+        let mut watching = watcher.0.lock().unwrap();
+        if watching.as_ref().is_none_or(|(folder, _)| *folder != data) {
+            let app = app.clone();
+            let watcher = zotero::watch_library(&data, move || {
+                use tauri::Emitter;
+                let _ = app.emit("zotero-changed", ());
+            });
+            *watching = Some((data.clone(), Box::new(watcher)));
+        }
+    }
+    zotero::read_library(&data).map(Some)
+}
+
+/// A Zotero paper's PDF (the paper's id, as in the library), as raw bytes for the PDF reader.
+#[tauri::command]
+async fn read_zotero_pdf(app: AppHandle, id: String) -> Result<tauri::ipc::Response, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let data = zotero::find_zotero(&home).ok_or("Zotero isn't on this computer.")?;
+    Ok(tauri::ipc::Response::new(zotero::read_pdf(&data, &id)?))
+}
+
 /// A file in the workspace, as raw bytes (for images in the editor and the PDF reader).
 #[tauri::command]
 async fn read_workspace_file(current: State<'_, CurrentWorkspace>, path: String) -> Result<tauri::ipc::Response, NoteError> {
@@ -268,6 +345,12 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Closes the app's window (⌘W with no tab open): the app quits.
+#[tauri::command]
+fn close_window(app: AppHandle) {
+    menu::close_window(&app);
+}
+
 /// Opens a workspace file from a link in its own app (for files the app doesn't show itself).
 #[tauri::command]
 fn open_file(app: AppHandle, current: State<CurrentWorkspace>, path: String) -> Result<(), String> {
@@ -277,6 +360,133 @@ fn open_file(app: AppHandle, current: State<CurrentWorkspace>, path: String) -> 
 }
 
 /// How the editor behaves (app-wide settings).
+/// Shows or hides the window's buttons (close, minimise, zoom) on a Mac: hidden while the sidebar
+/// is auto-hidden on the left, out of view, they come with it, like in Zen. With `fade`, they fade
+/// in once it's slid in (it takes 200ms), and out as it starts to leave; without, they just show
+/// or hide.
+#[tauri::command]
+fn show_window_buttons(window: tauri::WebviewWindow, shown: bool, fade: Option<bool>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    window_buttons::show(&window, shown, fade.unwrap_or(false))?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, shown, fade);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod window_buttons {
+    use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext, NSButton, NSWindow, NSWindowButton};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    /// How long the sidebar takes to slide in (see FileExplorer.tsx): they fade in after it.
+    const SLIDE: Duration = Duration::from_millis(200);
+    /// How long they take to fade in or out, in seconds.
+    const FADE: f64 = 0.12;
+    /// Counts changes: a later step (fading in after the slide, hiding after fading out) only
+    /// happens if nothing changed since.
+    static CHANGES: AtomicU64 = AtomicU64::new(0);
+
+    fn buttons_of(window: &tauri::WebviewWindow) -> Vec<objc2::rc::Retained<NSButton>> {
+        let Ok(pointer) = window.ns_window() else { return Vec::new() };
+        // SAFETY: Tauri's NSWindow for this window, used on the main thread while it's open.
+        let ns_window = unsafe { &*(pointer as *const NSWindow) };
+        [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton]
+            .into_iter()
+            .filter_map(|kind| ns_window.standardWindowButton(kind))
+            .collect()
+    }
+
+    /// Runs `then` on the main thread after `wait`, unless something changed meanwhile.
+    fn later(window: &tauri::WebviewWindow, change: u64, wait: Duration, then: impl FnOnce(&tauri::WebviewWindow) + Send + 'static) {
+        let window = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(wait);
+            let target = window.clone();
+            let _ = window.run_on_main_thread(move || {
+                if CHANGES.load(Ordering::SeqCst) == change {
+                    then(&target);
+                }
+            });
+        });
+    }
+
+    fn fade_to(window: &tauri::WebviewWindow, alpha: f64) {
+        NSAnimationContext::beginGrouping();
+        NSAnimationContext::currentContext().setDuration(FADE);
+        for button in buttons_of(window) {
+            button.animator().setAlphaValue(alpha);
+        }
+        NSAnimationContext::endGrouping();
+    }
+
+    pub fn show(window: &tauri::WebviewWindow, shown: bool, fade: bool) -> Result<(), String> {
+        let change = CHANGES.fetch_add(1, Ordering::SeqCst) + 1;
+        let target = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let buttons = buttons_of(&target);
+                if !fade {
+                    for button in &buttons {
+                        button.setAlphaValue(1.0);
+                        button.setHidden(!shown);
+                    }
+                } else if shown {
+                    // Once the sidebar has slid in under them.
+                    later(&target, change, SLIDE, |window| {
+                        for button in buttons_of(window) {
+                            button.setAlphaValue(0.0);
+                            button.setHidden(false);
+                        }
+                        fade_to(window, 1.0);
+                    });
+                } else {
+                    // As it starts to leave; then hidden, so they can't be clicked.
+                    fade_to(&target, 0.0);
+                    later(&target, change, Duration::from_secs_f64(FADE + 0.02), |window| {
+                        for button in buttons_of(window) {
+                            button.setHidden(true);
+                            button.setAlphaValue(1.0);
+                        }
+                    });
+                }
+            })
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The sidebar's width and how its height is shared, the same in every workspace.
+#[tauri::command]
+fn get_sidebar_sizes(app: AppHandle) -> workspace::SidebarSizes {
+    workspace::sidebar_sizes(&settings(&app))
+}
+
+#[tauri::command]
+fn save_sidebar_sizes(app: AppHandle, sizes: workspace::SidebarSizes) -> Result<(), String> {
+    workspace::save_sidebar_sizes(&settings(&app), &sizes).map_err(|e| e.to_string())
+}
+
+/// What's hidden in the sidebar's Library, in the open workspace.
+#[tauri::command]
+fn get_hidden_in_library(current: State<CurrentWorkspace>) -> Vec<String> {
+    current.path().map(|path| layout::load_hidden_in_library(&path)).unwrap_or_default()
+}
+
+#[tauri::command]
+fn save_hidden_in_library(current: State<CurrentWorkspace>, hidden: Vec<String>) -> Result<(), String> {
+    layout::save_hidden_in_library(&current.path()?, &hidden).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_open_folders(current: State<CurrentWorkspace>) -> Vec<String> {
+    current.path().map(|path| layout::load_open_folders(&path)).unwrap_or_default()
+}
+
+#[tauri::command]
+fn save_open_folders(current: State<CurrentWorkspace>, open: Vec<String>) -> Result<(), String> {
+    layout::save_open_folders(&current.path()?, &open).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_editor_settings(app: AppHandle) -> workspace::EditorSettings {
     workspace::editor_settings(&settings(&app))
@@ -401,6 +611,22 @@ async fn render_pages(
     Ok(pictures)
 }
 
+/// Exports a Typst note as a PDF file at `destination` (a full path, chosen in a Save dialog).
+/// Async, so exporting never blocks the window.
+#[tauri::command]
+async fn export_pdf(
+    current: State<'_, CurrentWorkspace>,
+    note: String,
+    path: Option<String>,
+    destination: String,
+) -> Result<(), String> {
+    let drawn = match (path, current.path()) {
+        (Some(path), Ok(workspace)) => pages::render_pages_at(&note, &workspace, &path)?,
+        _ => pages::render_pages(&note)?,
+    };
+    drawn.save_pdf(std::path::Path::new(&destination))
+}
+
 /// Where in the note's text a click on one of its pages lands (in points from the page's top left).
 #[tauri::command]
 fn page_position(open: State<OpenPages>, page: usize, x: f64, y: f64) -> Option<usize> {
@@ -436,6 +662,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(WorkspaceWatcher::default())
+        .manage(ZoteroWatcher::default())
         .plugin(tauri_plugin_dialog::init())
         .manage(CurrentWorkspace::default())
         .manage(OpenPages::default())
@@ -457,6 +684,14 @@ pub fn run() {
             save_explorer_layout,
             create_note,
             create_note_at,
+            create_folder,
+            rename_folder,
+            files_in_folder,
+            delete_folder,
+            move_into,
+            copy_into,
+            get_open_folders,
+            save_open_folders,
             create_board,
             notes_linking_to,
             rename_note,
@@ -467,6 +702,7 @@ pub fn run() {
             save_show_pages,
             render_pages,
             page_position,
+            export_pdf,
             remove_empty_note,
             restore_empty_note,
             delete_file,
@@ -474,9 +710,17 @@ pub fn run() {
             note_links,
             save_asset,
             open_url,
+            close_window,
             open_file,
             read_workspace_file,
+            zotero_library,
+            read_zotero_pdf,
             get_editor_settings,
+            get_sidebar_sizes,
+            show_window_buttons,
+            save_sidebar_sizes,
+            get_hidden_in_library,
+            save_hidden_in_library,
             save_editor_settings,
             parse_properties,
             write_properties,

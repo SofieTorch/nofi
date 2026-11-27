@@ -40,7 +40,7 @@ function backendCreatesUntitled(contents = "") {
 
 async function renderOpenWorkspace() {
   render(<App />);
-  await screen.findByRole("heading", { name: "Research Notes" });
+  await screen.findByRole("heading", { name: "Research Notes", hidden: true });
 }
 
 async function openNote(name: string) {
@@ -97,8 +97,10 @@ describe("Opening a note", () => {
     await renderOpenWorkspace();
     await userEvent.click(await screen.findByRole("button", { name: "Papers" }));
 
-    expect(screen.getByText("data.csv")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "data.csv" })).not.toBeInTheDocument();
+    // (Every file is a row that can be selected, dragged and renamed; clicking one that isn't a note, a PDF or a board opens nothing.)
+    await userEvent.click(screen.getByRole("button", { name: "data.csv" }));
+    expect(screen.queryByRole("tab", { name: "data" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "data.csv" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "attention.pdf" })).toBeInTheDocument();
   });
 

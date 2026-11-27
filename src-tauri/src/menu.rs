@@ -19,8 +19,11 @@ const GO_TO_FILE: &str = "go-to-file";
 const COMMAND_PALETTE: &str = "command-palette";
 const GRAPH_VIEW: &str = "graph-view";
 const CLOSE_PANE: &str = "close-pane";
+const EXPORT_PDF: &str = "export-pdf";
+const CLOSE_TAB: &str = "close-tab";
+const CLOSE_WINDOW: &str = "close-window";
 
-const ACTIONS: [&str; 15] = [
+const ACTIONS: [&str; 17] = [
     NEW_NOTE,
     NEW_MARKDOWN_NOTE,
     NEW_BOARD,
@@ -36,6 +39,8 @@ const ACTIONS: [&str; 15] = [
     COMMAND_PALETTE,
     GRAPH_VIEW,
     CLOSE_PANE,
+    EXPORT_PDF,
+    CLOSE_TAB,
 ];
 
 /// Items that only make sense while a workspace is open.
@@ -51,6 +56,7 @@ struct WorkspaceItems {
     command_palette: MenuItem<Wry>,
     graph_view: MenuItem<Wry>,
     close_pane: MenuItem<Wry>,
+    export_pdf: MenuItem<Wry>,
 }
 
 /// Starts from the default menu so the standard Edit menu (and copy/paste shortcuts) keep working.
@@ -77,6 +83,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         )?,
         graph_view: MenuItem::with_id(app, GRAPH_VIEW, "Graph View", false, Some("CmdOrCtrl+Shift+G"))?,
         close_pane: MenuItem::with_id(app, CLOSE_PANE, "Close Pane", false, None::<&str>)?,
+        export_pdf: MenuItem::with_id(app, EXPORT_PDF, "Export as PDF…", false, Some("CmdOrCtrl+Shift+E"))?,
         pin_explorer: CheckMenuItem::with_id(
             app,
             TOGGLE_EXPLORER_PINNED,
@@ -108,8 +115,24 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     file.insert(&items.new_board, 2)?;
     file.insert(&items.go_to_file, 3)?;
     file.insert(&PredefinedMenuItem::separator(app)?, 4)?;
-    file.insert(&items.close, 5)?;
+    file.insert(&items.export_pdf, 5)?;
     file.insert(&PredefinedMenuItem::separator(app)?, 6)?;
+    // ⌘W closes the shown tab (the window only when no tab is open), like VS Code: the default
+    // menu's Close Window, which took ⌘W, is replaced (it's in File, and in Window too).
+    for submenu in menu.items()?.into_iter().filter_map(|item| item.as_submenu().cloned()) {
+        for item in submenu.items()? {
+            if let Some(predefined) = item.as_predefined_menuitem() {
+                if predefined.text().is_ok_and(|text| text == "Close Window" || text == "Close") {
+                    submenu.remove(predefined)?;
+                }
+            }
+        }
+    }
+    file.insert(&MenuItem::with_id(app, CLOSE_TAB, "Close Tab", true, Some("CmdOrCtrl+W"))?, 7)?;
+    file.insert(&MenuItem::with_id(app, CLOSE_WINDOW, "Close Window", true, Some("CmdOrCtrl+Shift+W"))?, 8)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 9)?;
+    file.insert(&items.close, 10)?;
+    file.insert(&PredefinedMenuItem::separator(app)?, 11)?;
 
     // The app decides what Undo means: typing in the editor, or the last file action elsewhere.
     let edit = find_or_add_submenu(app, &menu, "Edit", Some("File"))?;
@@ -178,7 +201,20 @@ fn find_or_add_submenu(
     Ok(submenu)
 }
 
+/// Closes the app's window: the app quits.
+pub fn close_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.close();
+    }
+}
+
 pub fn handle_event(app: &AppHandle, id: &str) {
+    let workspace_open = app.try_state::<WorkspaceItems>().is_some_and(|items| items.close.is_enabled().unwrap_or(false));
+    // Without a workspace there are no tabs: ⌘W closes the window.
+    if id == CLOSE_WINDOW || (id == CLOSE_TAB && !workspace_open) {
+        close_window(app);
+        return;
+    }
     if let Some(action) = ACTIONS.into_iter().find(|action| *action == id) {
         let _ = app.emit("menu", action);
     }
@@ -197,6 +233,7 @@ pub fn set_workspace_open(app: &AppHandle, open: bool) {
         let _ = items.command_palette.set_enabled(open);
         let _ = items.graph_view.set_enabled(open);
         let _ = items.close_pane.set_enabled(open);
+        let _ = items.export_pdf.set_enabled(open);
     }
 }
 

@@ -2,6 +2,8 @@ import { mdiClose, mdiCloseBoxMultipleOutline } from "@mdi/js";
 import { Icon } from "@mdi/react";
 import { Fragment, type ReactNode, useRef, useState } from "react";
 import { IconButton } from "../ui/IconButton";
+import { Menu, type MenuItem } from "../ui/Menu";
+import { isMac } from "../ui/platform";
 import {
   closeGroup,
   type Drop,
@@ -20,6 +22,7 @@ import {
   type Tab,
   type TabPlace,
   closeTab,
+  closeTabs,
   keepTab,
 } from "./layout";
 
@@ -34,7 +37,17 @@ type Props = {
   label: (tab: Tab) => string;
   /** A tab's tooltip, like a note's path. */
   title?: (tab: Tab) => string;
+  /** What a tab's right-click menu offers (none: no menu). */
+  tabMenu?: (tab: Tab) => MenuItem[];
+  /**
+   * The tab row is the top of the window (it drags it): the top left pane leaves room for the
+   * window's buttons (on a Mac) when nothing else is under them.
+   */
+  roomForWindowButtons?: boolean;
 };
+
+/** Whether a pane is at the window's top left (where the window's buttons are). */
+type Place = { topLeft?: boolean };
 
 /** What's being dragged: a tab (from any pane), or a note (from the explorer). One at a time. */
 let dragging: { tab: TabPlace } | { note: string } | null = null;
@@ -75,14 +88,14 @@ const edgeFor = (tab: Tab | undefined) => (takesDrops(tab) ? 0.08 : 0.25);
  * splits it. A pane goes with its last tab, or with its "Close pane" button.
  */
 export function Panes(props: Props) {
-  return <PaneView pane={props.layout.root} {...props} />;
+  return <PaneView pane={props.layout.root} {...props} topLeft={props.roomForWindowButtons} />;
 }
 
-function PaneView({ pane, ...props }: Props & { pane: Pane }) {
+function PaneView({ pane, ...props }: Props & Place & { pane: Pane }) {
   return pane.kind === "group" ? <GroupView group={pane} {...props} /> : <SplitView split={pane} {...props} />;
 }
 
-function SplitView({ split: node, ...props }: Props & { split: Split }) {
+function SplitView({ split: node, topLeft, ...props }: Props & Place & { split: Split }) {
   const box = useRef<HTMLDivElement>(null);
   const row = node.direction === "row";
 
@@ -129,7 +142,7 @@ function SplitView({ split: node, ...props }: Props & { split: Split }) {
             </div>
           )}
           <div style={{ flexGrow: node.sizes[i], flexShrink: 1, flexBasis: 0 }} className="flex min-h-0 min-w-0">
-            <PaneView pane={child} {...props} />
+            <PaneView pane={child} {...props} topLeft={topLeft && i === 0} />
           </div>
         </Fragment>
       ))}
@@ -137,7 +150,9 @@ function SplitView({ split: node, ...props }: Props & { split: Split }) {
   );
 }
 
-function GroupView({ group, layout, onChange, content, empty, label, title }: Props & { group: Group }) {
+function GroupView({ group, layout, onChange, content, empty, label, title, tabMenu, topLeft }: Props & Place & { group: Group }) {
+  /** A tab's right-click menu: for which tab, and where. */
+  const [menu, setMenu] = useState<{ tab: Tab; index: number; at: { x: number; y: number } }>();
   const active = layout.active === group.id;
   const panel = useRef<HTMLDivElement>(null);
   /** Where a dragged tab would go: an edge of this pane, its middle, or before a tab. */
@@ -177,9 +192,13 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
           event.preventDefault();
           drop({ group: group.id, index: beforeTab ?? group.tabs.length });
         }}
-        className={`flex h-9 shrink-0 items-center gap-0.5 border-b border-neutral-100 px-1.5 ${active ? "" : "opacity-80"}`}
+        // (Its empty part moves the window: there's no title bar.)
+        data-tauri-drag-region
+        className={`flex h-10 shrink-0 items-center gap-0.5 border-b border-neutral-100 pr-1.5 ${topLeft && isMac ? "pl-20" : "pl-1.5"} ${
+          active ? "" : "opacity-80"
+        }`}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+        <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-0.5 self-stretch overflow-x-auto">
           {group.tabs.map((t, i) => {
             const name = label(t);
             const shown = i === group.active;
@@ -196,6 +215,10 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
                 onClick={() => onChange((current) => showTab(current, group.id, i))}
                 onDoubleClick={() => onChange((current) => keepTab(current, t))}
                 onAuxClick={(event) => event.button === 1 && onChange((current) => closeTab(current, group.id, i))}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setMenu({ tab: t, index: i, at: { x: event.clientX, y: event.clientY } });
+                }}
                 onDragStart={(event) => {
                   dragging = { tab: { group: group.id, index: i } };
                   event.dataTransfer?.setData("text/plain", name);
@@ -271,7 +294,8 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
           if (side === "middle" && takesDrops(tab) && dragging && "note" in dragging) return;
           drop(side === "middle" ? { group: group.id, index: group.tabs.length } : { group: group.id, side });
         }}
-        className="relative min-h-0 flex-1"
+        // (A layer of its own: nothing in a note or PDF, like a PDF's note marks, can go over the floating sidebar.)
+        className="relative isolate min-h-0 flex-1"
       >
         {tab ? content(tab, group) : empty}
         {dropAt && (
@@ -288,6 +312,26 @@ function GroupView({ group, layout, onChange, content, empty, label, title }: Pr
           />
         )}
       </div>
+      {menu && (
+        <Menu
+          label={label(menu.tab)}
+          at={menu.at}
+          items={[...closingItems(group, menu.index, (close) => onChange((current) => closeTabs(current, group.id, menu.index, close))), ...(tabMenu?.(menu.tab) ?? []).map((item, n) => (n === 0 ? { ...item, divider: true } : item))]}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
     </section>
   );
+}
+
+/** A tab's right-click menu's closing items, like VS Code's; one that would close nothing can't be chosen. */
+function closingItems(group: Group, index: number, close: (which: (i: number) => boolean) => void): MenuItem[] {
+  const count = group.tabs.length;
+  return [
+    { label: "Close", run: () => close((i) => i === index) },
+    { label: "Close Others", disabled: count < 2, run: () => close((i) => i !== index) },
+    { label: "Close to the Right", disabled: index === count - 1, run: () => close((i) => i > index) },
+    { label: "Close to the Left", disabled: index === 0, run: () => close((i) => i < index) },
+    { label: "Close All", run: () => close(() => true) },
+  ];
 }

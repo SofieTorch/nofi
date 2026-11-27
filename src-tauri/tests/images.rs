@@ -113,6 +113,15 @@ mod typst_and_images {
     }
 
     #[test]
+    fn the_note_is_exported_as_a_pdf_with_its_image() {
+        let workspace = with_image();
+
+        let pdf = render_pages_at("#image(\"assets/a.png\")", workspace.path(), "Paper.typ").unwrap().pdf().unwrap();
+
+        assert!(String::from_utf8_lossy(&pdf).replace(' ', "").contains("/Subtype/Image"));
+    }
+
+    #[test]
     fn a_missing_image_is_explained() {
         let workspace = workspace();
 

@@ -14,6 +14,12 @@ struct LayoutFile {
     /// Whether Typst notes are shown as pages next to the editor.
     #[serde(default)]
     show_pages: bool,
+    /// What's hidden in the sidebar's Library: Zotero libraries and collections, by id.
+    #[serde(default)]
+    hidden_in_library: Vec<String>,
+    /// The explorer's open folders, by path.
+    #[serde(default)]
+    open_folders: Vec<String>,
 }
 
 fn load(workspace: &Path) -> LayoutFile {
@@ -58,6 +64,17 @@ pub enum ExplorerMode {
 pub struct ExplorerLayout {
     pub side: Side,
     pub mode: ExplorerMode,
+    /// Which of the sidebar's sections are folded away (all open at first).
+    #[serde(default)]
+    pub collapsed: Collapsed,
+}
+
+/// The sidebar's sections, each folded away or not.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Collapsed {
+    pub files: bool,
+    pub library: bool,
 }
 
 pub fn load_explorer_layout(workspace: &Path) -> ExplorerLayout {
@@ -75,4 +92,22 @@ pub fn load_show_pages(workspace: &Path) -> bool {
 
 pub fn save_show_pages(workspace: &Path, show: bool) -> io::Result<()> {
     update(workspace, |data| data.show_pages = show)
+}
+
+/// What's hidden in the sidebar's Library (Zotero libraries and collections, by id).
+pub fn load_hidden_in_library(workspace: &Path) -> Vec<String> {
+    load(workspace).hidden_in_library
+}
+
+pub fn save_hidden_in_library(workspace: &Path, hidden: &[String]) -> io::Result<()> {
+    update(workspace, |data| data.hidden_in_library = hidden.to_vec())
+}
+
+/// The explorer's open folders (their paths), so they're open again next time.
+pub fn load_open_folders(workspace: &Path) -> Vec<String> {
+    load(workspace).open_folders
+}
+
+pub fn save_open_folders(workspace: &Path, open: &[String]) -> io::Result<()> {
+    update(workspace, |data| data.open_folders = open.to_vec())
 }

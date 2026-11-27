@@ -75,6 +75,23 @@ mod saving_a_note {
     }
 
     #[test]
+    fn a_zotero_papers_annotations_are_saved_in_the_apps_folder_made_if_missing() {
+        let workspace = workspace_with(&[]);
+
+        save_note(workspace.path(), ".marginalia/zotero/groups/77/UNIPAPER.annotations.json", "{}").unwrap();
+
+        assert_eq!(contents_of(&workspace, ".marginalia/zotero/groups/77/UNIPAPER.annotations.json"), "{}");
+    }
+
+    #[test]
+    fn a_note_whose_folder_is_gone_isnt_saved_into_a_new_one() {
+        let workspace = workspace_with(&[]);
+
+        assert!(save_note(workspace.path(), "Gone/Ideas.typ", "text").is_err());
+        assert!(!workspace.path().join("Gone").exists());
+    }
+
+    #[test]
     fn keeps_the_text_exactly_as_typed() {
         let workspace = workspace_with(&[("Ideas.typ", "")]);
         let text = "= Café ☕\n\n  indented line\r\nwindows line\n\n";

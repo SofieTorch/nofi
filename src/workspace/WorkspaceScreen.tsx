@@ -1,4 +1,5 @@
 import { startCompletion } from "@codemirror/autocomplete";
+import { mdiFileDocumentMultipleOutline } from "@mdi/js";
 import { redo, undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,8 +15,12 @@ import { setImageProblemReporter } from "../editor/images";
 import { type Command, CommandPalette } from "./CommandPalette";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { SettingsDialog } from "./SettingsDialog";
-import { FileExplorer } from "../explorer/FileExplorer";
+import { FileExplorer, type Section } from "../explorer/FileExplorer";
+import { findPaper, zoteroPath } from "../explorer/Library";
+import { type Moved, relink } from "../explorer/relink";
 import { isMac } from "../ui/platform";
+import type { FindAt } from "./PdfView";
+import type { Match } from "../explorer/searchWorkspace";
 import { UNDO_IN_FIELD } from "../editor/TableGrid";
 import { SHOW_SUGGESTIONS } from "../ui/SuggestingInput";
 import { FileHistory } from "./fileHistory";
@@ -24,7 +29,6 @@ import { activeFile, activePath, closeGroup, closeTab, emptyLayout, findTab, gro
 import { Panes } from "./Panes";
 import { PdfView } from "./PdfView";
 import { BoardView } from "../board/BoardView";
-import { TopBar } from "./TopBar";
 
 const SAVE_PROBLEM = "Couldn't save the note:";
 
@@ -44,7 +48,12 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   const [filesError, setFilesError] = useState<string>();
   /** The panes and their tabs; the active pane's note is highlighted in the explorer. */
   const [panes, setPanes] = useState<Layout>(emptyLayout);
+  // (For the menu's handler, set up once.)
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
   const openPath = activePath(panes);
+  const openPathRef = useRef(openPath);
+  openPathRef.current = openPath;
   // The note last shown, even while the graph's pane is the active one.
   const lastNoteRef = useRef<string>(undefined);
   if (openPath) lastNoteRef.current = openPath;
@@ -72,9 +81,54 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   /** A match to select in a note, once it's open (a new object each time, to select it again). */
   const [reveal, setReveal] = useState<api.TextMatch>();
   /** A part of a file to go to, once it's open (from a link; a new object each time). */
-  const [goTo, setGoTo] = useState<{ path: string; part: string }>();
-  /** A file the user asked to delete, waiting for them to confirm. */
-  const [deleting, setDeleting] = useState<string>();
+  /** Where a note or PDF just opened goes: a part of it, or a match of a text found in it. */
+  const [goTo, setGoTo] = useState<{ path: string; part?: string; find?: FindAt }>();
+  /** The search of the whole workspace (⌘⇧F): whether it's open, and the times it was asked for. */
+  const [search, setSearch] = useState({ open: false, focus: 0 });
+  /** A hidden sidebar comes out for ⌘⇧F, until a match is opened or the mouse leaves it. */
+  const [searchShown, setSearchShown] = useState(false);
+  const openSearch = () => {
+    setSearch((current) => ({ open: true, focus: current.focus + 1 }));
+    setSearchShown(true);
+  };
+  /** A file or folder the user asked to delete, waiting for them to confirm (a folder: with how many files are in it). */
+  const [deleting, setDeleting] = useState<{ path: string; files?: number }>();
+  /** The explorer's open folders (kept for the workspace), and the row clicked last. */
+  const [openFolders, setOpenFolders] = useState<ReadonlySet<string>>(new Set());
+  const [selected, setSelected] = useState<string | null>(null);
+  function changeOpenFolders(change: (open: Set<string>) => void) {
+    setOpenFolders((current) => {
+      const next = new Set(current);
+      change(next);
+      api.saveOpenFolders([...next]).catch(() => {});
+      return next;
+    });
+  }
+  useEffect(() => {
+    api.getOpenFolders().then(
+      (open) => setOpenFolders((current) => (current.size ? current : new Set(open))),
+      () => {},
+    );
+  }, []);
+  /** Opens a folder and the folders it's in, to show something in it. */
+  const showFolder = (folder: string) =>
+    changeOpenFolders((open) => {
+      for (let at = folder; at; at = parentOf(at)) open.add(at);
+    });
+  const isFolder = (path: string) => {
+    const find = (entries: FileEntry[]): FileEntry | undefined => {
+      for (const entry of entries) {
+        if (entry.path === path) return entry;
+        const inside = entry.kind === "folder" && path.startsWith(`${entry.path}/`) ? find(entry.children) : undefined;
+        if (inside) return inside;
+      }
+    };
+    return find(filesRef.current)?.kind === "folder";
+  };
+  /** Where new notes and folders go: the selected folder, or the selected file's, or the top. */
+  const targetFolder = () => (selected === null ? "" : isFolder(selected) ? selected : parentOf(selected));
+  const selectedRef = useRef(targetFolder);
+  selectedRef.current = targetFolder;
   /** Notes found to have mistakes (only notes opened in this session are known). */
   const [withMistakes, setWithMistakes] = useState<ReadonlySet<string>>(new Set());
   function noteMistakes(path: string, hasMistakes: boolean) {
@@ -120,10 +174,14 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
 
   async function loadFiles() {
     try {
-      setFiles(await api.listFiles());
+      const listed = await api.listFiles();
+      setFiles(listed);
+      filesRef.current = listed;
       setFilesError(undefined);
+      return listed;
     } catch (error) {
       setFilesError(String(error));
+      return filesRef.current;
     }
   }
 
@@ -152,11 +210,24 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     };
   }, []);
 
-  /** A new note (Typst unless told), or a new board, opened to name it. */
-  async function newNote(format?: NoteFormat | "board") {
+  /**
+   * A new note (Typst unless told), or a new board, opened to name it. Notes go in a folder (else
+   * the one selected in the explorer); boards at the top.
+   */
+  async function newNote(format?: NoteFormat | "board", into?: string) {
     try {
-      const path = format === "board" ? await api.createBoard() : format ? await api.createNote(format) : await api.createNote();
+      const folder = into ?? selectedRef.current();
+      const path =
+        format === "board"
+          ? await api.createBoard()
+          : folder
+            ? await api.createNote(format, folder)
+            : format
+              ? await api.createNote(format)
+              : await api.createNote();
       setProblem(undefined);
+      if (parentOf(path)) showFolder(parentOf(path));
+      setSelected(path);
       openNote(path, { preview: false });
       setRenamingPath(path);
       await loadFiles();
@@ -181,15 +252,121 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     }
   }
 
-  /** Renames a note on disk; its open editor and undo history follow it. */
+  /** Renames a note (or any file) on disk; its open editor, undo history and the links to it follow it. */
   async function renameFile(path: string, newName: string) {
     // Save what was typed first, or it would be saved under the old name afterwards.
     await autosave.flush();
     const newPath = await api.renameNote(path, newName);
-    moveNoteHistory(path, newPath);
-    await loadFiles();
-    setPanes((current) => renamePath(current, path, newPath));
+    if (newPath !== path) await followMoves([{ from: path, to: newPath }]);
     return newPath;
+  }
+
+  /** A new folder in a folder (else the one selected), its name ready to type. */
+  async function newFolder(into?: string) {
+    try {
+      const path = await api.createFolder(into ?? selectedRef.current());
+      setProblem(undefined);
+      if (parentOf(path)) showFolder(parentOf(path));
+      await loadFiles();
+      setSelected(path);
+      setRenamingPath(path);
+    } catch (error) {
+      setProblem(`Couldn't create the folder: ${error}`);
+    }
+  }
+
+  /**
+   * After files or folders moved: open notes, their histories, open folders and the selection
+   * follow them, and links to them (or in them) are changed.
+   */
+  async function followMoves(moves: Moved[]) {
+    const after = (path: string) => {
+      for (const { from, to } of moves) {
+        if (path === from) return to;
+        if (path.startsWith(`${from}/`)) return to + path.slice(from.length);
+      }
+      return path;
+    };
+    const listed = await loadFiles();
+    for (const note of notesIn(listed)) {
+      const before = moves.reduce((p, { from, to }) => (p === to || p.startsWith(`${to}/`) ? from + p.slice(to.length) : p), note);
+      if (before !== note) moveNoteHistory(before, note);
+    }
+    await relink(notesIn(listed), moves);
+    setPanes((current) => {
+      let next = current;
+      for (const group of groups(current)) {
+        for (const tab of group.tabs) if ("path" in tab && after(tab.path) !== tab.path) next = renamePath(next, tab.path, after(tab.path));
+      }
+      return next;
+    });
+    changeOpenFolders((open) => {
+      const now = [...open].map(after);
+      open.clear();
+      for (const folder of now) open.add(folder);
+    });
+    setSelected((current) => (current === null ? null : after(current)));
+  }
+
+  async function renameFolder(path: string, newName: string) {
+    await autosave.flush();
+    const newPath = await api.renameFolder(path, newName);
+    setRenamingPath(undefined);
+    if (newPath !== path) await followMoves([{ from: path, to: newPath }]);
+  }
+
+  /** Moves (or copies) a file or folder into a folder ("" for the top). */
+  async function moveInto(path: string, folder: string, copy: boolean) {
+    try {
+      await autosave.flush();
+      const newPath = copy ? await api.copyInto(path, folder) : await api.moveInto(path, folder);
+      setProblem(undefined);
+      if (folder) showFolder(folder);
+      if (copy) {
+        const listed = await loadFiles();
+        await relink(notesIn(listed), [], [{ from: path, to: newPath }]);
+      } else if (newPath !== path) {
+        await followMoves([{ from: path, to: newPath }]);
+      }
+    } catch (reason) {
+      setProblem(`Couldn't ${copy ? "copy" : "move"} “${fileName(path)}”: ${reason}`);
+    }
+  }
+
+  /** Delete (right-click, or the keyboard): a file or a folder with files in it asks first; an empty folder just goes. */
+  async function askToDelete(path: string) {
+    if (!isFolder(path)) return setDeleting({ path });
+    try {
+      const count = await api.filesInFolder(path);
+      if (count === 0) await deleteFolder(path);
+      else setDeleting({ path, files: count });
+    } catch (reason) {
+      setProblem(`Couldn't delete “${fileName(path)}”: ${reason}`);
+    }
+  }
+
+  /** Deletes a folder and what's in it (to the system's Trash); notes open from it close. */
+  async function deleteFolder(path: string) {
+    setDeleting(undefined);
+    try {
+      await autosave.flush();
+      await api.deleteFolder(path);
+      const inside = (p: string) => p === path || p.startsWith(`${path}/`);
+      for (const note of notesIn(filesRef.current).filter(inside)) forgetNoteHistory(note);
+      setPanes((current) => {
+        let next = current;
+        for (const group of groups(current)) for (const tab of group.tabs) if ("path" in tab && inside(tab.path)) next = removePath(next, tab.path);
+        return next;
+      });
+      changeOpenFolders((open) => {
+        for (const folder of [...open]) if (inside(folder)) open.delete(folder);
+      });
+      setSelected((current) => (current !== null && inside(current) ? null : current));
+      setProblem(undefined);
+    } catch (reason) {
+      setProblem(`Couldn't delete “${fileName(path)}”: ${reason}`);
+    }
+    await loadFiles();
   }
 
   async function renameNote(path: string, newName: string) {
@@ -228,9 +405,11 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       const { path } = target;
       const exists = (entries: FileEntry[]): boolean =>
         entries.some((entry) => entry.path === path || (entry.kind === "folder" && exists(entry.children)));
-      const inApp = noteFormat(path) || /\.(pdf|canvas)$/i.test(path);
+      const inApp = noteFormat(path) || /\.(pdf|canvas)$/i.test(path) || path.startsWith("zotero:");
       if (!inApp) return await api.openFile(path);
-      if (noteFormat(path)) {
+      if (path.startsWith("zotero:")) {
+        // (A Zotero paper: its PDF opens from Zotero, which says if it can't.)
+      } else if (noteFormat(path)) {
         if (!(await ensureNote(path))) return;
       } else if (!exists(filesRef.current)) {
         return setProblem(`“${fileName(path)}” isn't in the workspace.`);
@@ -272,6 +451,31 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   }
 
   const closeActivePane = () => setPanes((current) => closeGroup(current, current.active));
+
+  /**
+   * Exports a Typst note (the one shown, unless said) as a PDF, where the user chooses: the Save
+   * dialog starts beside the note, with its name. What's typed counts, even if not saved yet.
+   */
+  async function exportPdf(path = openPathRef.current) {
+    if (!path) return setProblem("Open a Typst note to export it as a PDF.");
+    if (noteFormat(path) !== "typst") return setProblem("Only Typst notes can be exported as PDFs.");
+    const destination = await api.pickPdfDestination(`${workspace.path}/${path.replace(/\.typ$/i, "")}.pdf`);
+    if (!destination) return;
+    try {
+      await autosave.flush();
+      await api.exportPdf(await api.readNote(path), path, destination);
+      setProblem(undefined);
+      setNotice(`Exported “${fileName(destination)}”.`);
+    } catch (reason) {
+      setProblem(`Couldn't export “${fileName(path)}”: ${reason}`);
+    }
+  }
+
+  /** ⌘W: closes the shown tab; with no tab open anywhere, the window (the app quits). */
+  function closeTabOrWindow() {
+    if (groups(panesRef.current).some((group) => group.tabs.length)) closeActiveTab();
+    else api.closeWindow().catch(() => {});
+  }
 
   function closeActiveTab() {
     setPanes((current) => {
@@ -347,6 +551,17 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     stepFileHistory(kind);
   }
 
+  // ⌘⇧F (Ctrl+Shift+F elsewhere): search the whole workspace, in the sidebar.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.altKey || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      openSearch();
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   // ⌘Z / ⌘⇧Z (Ctrl on Windows and Linux) outside the editor and text fields: file actions.
   // The editor handles its own shortcut first, so typing is never undone from here.
   useEffect(() => {
@@ -414,6 +629,39 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     api.saveShowPages(show).catch(console.error);
   }
 
+  /** Folds a sidebar section away, or opens it again. */
+  const toggleSection = (section: Section) =>
+    changeLayout((l) => {
+      const collapsed = l.collapsed ?? { files: false, library: false };
+      return { ...l, collapsed: { ...collapsed, [section]: !collapsed[section] } };
+    });
+
+  /** Zotero papers' titles, by the path their PDFs are open with (for their tabs). */
+  const [paperTitles, setPaperTitles] = useState<ReadonlyMap<string, string>>(new Map());
+  // Zotero papers opened some other way (from a link, or open last time) are named by their titles too.
+  const papersOpen = groups(panes)
+    .flatMap((group) => group.tabs.flatMap((tab) => ("path" in tab ? [tab.path] : [])))
+    .filter((path) => path.startsWith("zotero:"));
+  const untitled = papersOpen.filter((path) => !paperTitles.has(path)).join("\n");
+  useEffect(() => {
+    if (!untitled) return;
+    let current = true;
+    for (const path of untitled.split("\n")) {
+      findPaper(path.slice("zotero:".length)).then((paper) => {
+        if (current && paper) setPaperTitles((titles) => new Map(titles).set(path, paper.title));
+      });
+    }
+    return () => {
+      current = false;
+    };
+  }, [untitled]);
+
+  function openPaper(paper: api.ZoteroItem, newPane: boolean) {
+    const path = zoteroPath(paper.id);
+    setPaperTitles((titles) => new Map(titles).set(path, paper.title));
+    openNote(path, { newPane });
+  }
+
   const togglePinned = () =>
     changeLayout((l) => ({ ...l, mode: l.mode === "pinned" ? "auto-hide" : "pinned" }));
   const moveToOtherSide = () =>
@@ -434,6 +682,8 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       if (action === "command-palette") setPalette(">");
       if (action === "graph-view") openGraph();
       if (action === "close-pane") closeActivePane();
+      if (action === "close-tab") closeTabOrWindow();
+      if (action === "export-pdf") exportPdf();
     });
     return () => {
       unlisten.then((stopListening) => stopListening());
@@ -453,14 +703,40 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     renaming: renamingPath
       ? {
           path: renamingPath,
-          onRename: (newName: string) => renameNote(renamingPath, newName),
+          onRename: (newName: string) => (isFolder(renamingPath) ? renameFolder(renamingPath, newName) : renameNote(renamingPath, newName)),
           onCancel: () => setRenamingPath(undefined),
         }
       : undefined,
     onTogglePinned: togglePinned,
-    onNewNote: () => newNote(),
+    onNewNote: (folder?: string) => newNote(undefined, folder),
+    onNewFolder: newFolder,
     onStartRenaming: setRenamingPath,
-    onDelete: setDeleting,
+    onDelete: askToDelete,
+    openFolders,
+    onToggleFolder: (path: string) =>
+      changeOpenFolders((open) => {
+        if (!open.delete(path)) open.add(path);
+      }),
+    onCollapseAll: () => changeOpenFolders((open) => open.clear()),
+    selected,
+    onSelect: setSelected,
+    onMove: moveInto,
+    workspaceName: workspace.name,
+    onToggleSection: toggleSection,
+    onOpenPaper: openPaper,
+    search: {
+      ...search,
+      onOpen: openSearch,
+      onClose: () => {
+        setSearch((current) => ({ ...current, open: false }));
+        setSearchShown(false);
+      },
+      onOpenMatch: (path: string, query: string, match: Match, newPane: boolean) => {
+        setSearchShown(false);
+        openNote(path, { newPane });
+        setGoTo({ path, find: { query, nth: match.nth, ...(match.page === undefined ? {} : { page: match.page }) } });
+      },
+    },
   };
 
   // What the command palette (⌘⇧P) can do, named like the menus.
@@ -471,8 +747,10 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       run: () => changeEditorSettings({ ...editorSettings, blockHandles: !editorSettings.blockHandles }),
     },
     { label: "File: New Note", run: () => newNote() },
+    { label: "Search: Find in Workspace", run: openSearch },
     { label: "File: New Board", run: () => newNote("board") },
     { label: "File: New Markdown Note", run: () => newNote("markdown") },
+    { label: "File: Export as PDF…", run: () => exportPdf() },
     { label: `View: ${showPages ? "Hide" : "Show"} Pages`, run: toggleShowPages },
     { label: `View: ${layout.mode === "pinned" ? "Unpin" : "Pin"} File Explorer`, run: togglePinned },
     { label: "View: Move File Explorer to Other Side", run: moveToOtherSide },
@@ -483,13 +761,6 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
 
   return (
     <div className="flex h-screen flex-col bg-white">
-      <TopBar
-        workspaceName={workspace.name}
-        explorerSide={layout.side}
-        onExplorerSideChange={(side) => changeLayout((l) => ({ ...l, side }))}
-        showPages={showPages}
-        onToggleShowPages={toggleShowPages}
-      />
       <div
         className={`relative flex min-h-0 flex-1 ${layout.side === "right" ? "flex-row-reverse" : ""}`}
       >
@@ -500,20 +771,32 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
             aria-label="Show file explorer"
             data-side={layout.side}
             onMouseEnter={() => setHovering(true)}
-            onMouseLeave={() => setHovering(false)}
+            onMouseLeave={() => {
+              setHovering(false);
+              setSearchShown(false);
+            }}
             className="relative z-10 h-full w-2 shrink-0"
           >
             {/* Always mounted so it can animate out and keeps its open folders.
                 Stays out while a new note is being named, so the name field doesn't vanish. */}
-            <FileExplorer {...explorerProps} floating visible={hovering || !!renamingPath} />
+            <FileExplorer {...explorerProps} floating visible={hovering || !!renamingPath || searchShown} />
           </div>
         )}
         <main className="relative min-w-0 flex-1 overflow-hidden">
           <Panes
             layout={panes}
             onChange={setPanes}
-            label={(tab) => (tab.kind === "graph" ? "Graph" : tab.kind === "pdf" ? fileName(tab.path) : nameOf(tab.path))}
-            title={(tab) => (tab.kind === "graph" ? "Graph" : tab.path)}
+            // (With the sidebar on the left, the window's buttons are on it, or hidden with it.)
+            roomForWindowButtons={layout.side === "right"}
+            tabMenu={(tab) =>
+              tab.kind === "note" && noteFormat(tab.path) === "typst"
+                ? [{ label: showPages ? "Hide Pages" : "Show Pages", icon: mdiFileDocumentMultipleOutline, run: toggleShowPages }]
+                : []
+            }
+            label={(tab) =>
+              tab.kind === "graph" ? "Graph" : tab.kind === "pdf" ? (paperTitles.get(tab.path) ?? fileName(tab.path)) : nameOf(tab.path)
+            }
+            title={(tab) => (tab.kind === "graph" ? "Graph" : (paperTitles.get(tab.path) ?? tab.path))}
             content={(tab, group) =>
               tab.kind === "board" ? (
                 <BoardView
@@ -546,6 +829,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
                   path={tab.path}
                   autosave={autosave}
                   showPages={showPages}
+                  onExportPdf={() => exportPdf(tab.path)}
                   reveal={reveal?.path === tab.path ? reveal : undefined}
                   goTo={goTo?.path === tab.path ? goTo : undefined}
                   onEdited={keepNote}
@@ -593,11 +877,29 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
         />
       )}
       {deleting && (
-        <ConfirmDelete name={fileName(deleting)} onDelete={() => deleteFile(deleting)} onCancel={() => setDeleting(undefined)} />
+        <ConfirmDelete
+          name={fileName(deleting.path)}
+          files={deleting.files}
+          onDelete={() => (deleting.files === undefined ? deleteFile(deleting.path) : deleteFolder(deleting.path))}
+          onCancel={() => setDeleting(undefined)}
+        />
       )}
       {settingsOpen && (
-        <SettingsDialog settings={editorSettings} onChange={changeEditorSettings} onClose={() => setSettingsOpen(false)} />
+        <SettingsDialog
+          settings={editorSettings}
+          onChange={changeEditorSettings}
+          sidebarSide={layout.side}
+          onSidebarSideChange={(side) => changeLayout((l) => ({ ...l, side }))}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
     </div>
   );
+}
+
+const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+
+/** Every note in the workspace's files. */
+function notesIn(entries: FileEntry[]): string[] {
+  return entries.flatMap((entry) => (entry.kind === "folder" ? notesIn(entry.children) : noteFormat(entry.path) ? [entry.path] : []));
 }

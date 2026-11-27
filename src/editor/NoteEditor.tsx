@@ -1,3 +1,4 @@
+import { findInNote } from "./findInNote";
 import { defaultKeymap, history, historyField, historyKeymap } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -47,6 +48,7 @@ export function NoteEditor({
       EditorView.contentAttributes.of({ "aria-label": name, spellcheck: "true" }),
       notePath.of(historyKey),
       editorFeatures(format),
+      findInNote(),
       format === "typst" ? typstProblems((problems) => onProblemsRef.current?.(problems)) : [],
       EditorView.updateListener.of((update) => {
         // (Any change: the text, the cursor, or a heading collapsed.)

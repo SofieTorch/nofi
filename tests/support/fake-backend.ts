@@ -11,6 +11,7 @@ import { forgetTableReads } from "../../src/editor/TableGrid";
 
 let menuHandlers: ((action: api.MenuAction) => void)[] = [];
 let fileHandlers: (() => void)[] = [];
+let zoteroHandlers: (() => void)[] = [];
 
 /** Defaults: first launch, no recent workspaces, an empty workspace, every call succeeds. */
 export function setUpFakeBackend() {
@@ -22,6 +23,13 @@ export function setUpFakeBackend() {
   forgetPictures();
   menuHandlers = [];
   fileHandlers = [];
+  zoteroHandlers = [];
+  vi.mocked(api.onZoteroChanged).mockImplementation(async (handler) => {
+    zoteroHandlers.push(handler);
+    return () => {
+      zoteroHandlers = zoteroHandlers.filter((h) => h !== handler);
+    };
+  });
   vi.mocked(api.onFilesChanged).mockImplementation(async (handler) => {
     fileHandlers.push(handler);
     return () => {
@@ -46,6 +54,14 @@ export function setUpFakeBackend() {
   vi.mocked(api.removeEmptyNote).mockResolvedValue();
   vi.mocked(api.restoreEmptyNote).mockResolvedValue();
   vi.mocked(api.deleteFile).mockResolvedValue();
+  vi.mocked(api.createFolder).mockImplementation(async (parent) => (parent ? `${parent}/New folder` : "New folder"));
+  vi.mocked(api.renameFolder).mockImplementation(async (path, newName) => path.replace(/[^/]*$/, newName));
+  vi.mocked(api.filesInFolder).mockResolvedValue(0);
+  vi.mocked(api.deleteFolder).mockResolvedValue();
+  vi.mocked(api.moveInto).mockImplementation(async (path, folder) => (folder ? `${folder}/` : "") + path.split("/").pop());
+  vi.mocked(api.copyInto).mockImplementation(async (path, folder) => (folder ? `${folder}/` : "") + path.split("/").pop());
+  vi.mocked(api.getOpenFolders).mockResolvedValue([]);
+  vi.mocked(api.saveOpenFolders).mockResolvedValue();
   vi.mocked(api.createNoteAt).mockImplementation(async (path) => path);
   vi.mocked(api.searchNotes).mockResolvedValue([]);
   vi.mocked(api.noteLinks).mockResolvedValue([]);
@@ -53,6 +69,13 @@ export function setUpFakeBackend() {
   vi.mocked(api.openFile).mockResolvedValue();
   vi.mocked(api.saveAsset).mockImplementation(async (name) => `assets/${name}`);
   vi.mocked(api.readWorkspaceFile).mockResolvedValue(new ArrayBuffer(8));
+  vi.mocked(api.zoteroLibrary).mockResolvedValue(null);
+  vi.mocked(api.getHiddenInLibrary).mockResolvedValue([]);
+  vi.mocked(api.saveHiddenInLibrary).mockResolvedValue();
+  vi.mocked(api.showWindowButtons).mockResolvedValue();
+  vi.mocked(api.getSidebarSizes).mockResolvedValue({ width: 256, filesShare: 0.5 });
+  vi.mocked(api.saveSidebarSizes).mockResolvedValue();
+  vi.mocked(api.readZoteroPdf).mockResolvedValue(new ArrayBuffer(8));
   vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: true, boardBackground: "plain" });
   vi.mocked(api.saveEditorSettings).mockResolvedValue();
   vi.mocked(api.parseProperties).mockResolvedValue([]);
@@ -71,6 +94,9 @@ export function setUpFakeBackend() {
   vi.mocked(api.saveShowPages).mockResolvedValue();
   vi.mocked(api.renderPages).mockResolvedValue([]);
   vi.mocked(api.pagePosition).mockResolvedValue(null);
+  vi.mocked(api.pickPdfDestination).mockResolvedValue(null);
+  vi.mocked(api.exportPdf).mockResolvedValue();
+  vi.mocked(api.closeWindow).mockResolvedValue();
   vi.mocked(api.onMenuAction).mockImplementation(async (handler) => {
     menuHandlers.push(handler);
     return () => {
@@ -84,6 +110,7 @@ const menuItems = {
   "File › New Markdown Note": "new-markdown-note",
   "File › New Board": "new-board",
   "File › Close Workspace": "close-workspace",
+  "File › Close Tab": "close-tab",
   "View › Pin File Explorer": "toggle-explorer-pinned",
   "View › Move File Explorer to Other Side": "move-explorer-to-other-side",
   "View › Show Pages": "toggle-pages",
@@ -95,6 +122,7 @@ const menuItems = {
   "View › Command Palette…": "command-palette",
   "View › Graph View": "graph-view",
   "View › Close Pane": "close-pane",
+  "File › Export as PDF…": "export-pdf",
 } as const satisfies Record<string, api.MenuAction>;
 
 /** Simulates the user choosing an item in the native app menu. */
@@ -127,3 +155,11 @@ export const folder = (path: string, children: api.FileEntry[] = []): api.FileEn
   kind: "folder",
   children,
 });
+
+/** Simulates the Zotero library changing (a paper added in Zotero, or synced into it). */
+export async function zoteroChangedOnDisk() {
+  await vi.waitFor(() => {
+    if (zoteroHandlers.length === 0) throw new Error("App is not watching the Zotero library");
+  });
+  await act(async () => zoteroHandlers.forEach((handler) => handler()));
+}
