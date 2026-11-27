@@ -1,5 +1,5 @@
 import { startCompletion } from "@codemirror/autocomplete";
-import { mdiFileDocumentMultipleOutline } from "@mdi/js";
+import { mdiCodeTags, mdiFileDocumentMultipleOutline } from "@mdi/js";
 import { redo, undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -42,6 +42,17 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
   const layoutRef = useRef<ExplorerLayout | null>(null);
   const [hovering, setHovering] = useState(false);
   // Whether Typst notes are also shown as pages; mirrored in a ref for menu events.
+  /** The Typst notes shown as code (their raw text), not formatted: each note has its own switch. */
+  const [codeNotes, setCodeNotes] = useState<ReadonlySet<string>>(new Set());
+  /** Shows a Typst note as code, or formatted again (the active note's, if none is said). */
+  function toggleCode(path = activePath(panesRef.current)) {
+    if (!path || noteFormat(path) !== "typst") return;
+    setCodeNotes((current) => {
+      const next = new Set(current);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+  }
   const [showPages, setShowPages] = useState(false);
   const showPagesRef = useRef(false);
   const [files, setFiles] = useState<FileEntry[] | null>(null);
@@ -675,6 +686,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       if (action === "toggle-explorer-pinned") togglePinned();
       if (action === "move-explorer-to-other-side") moveToOtherSide();
       if (action === "toggle-pages") toggleShowPages();
+      if (action === "toggle-code") toggleCode();
       if (action === "undo" || action === "redo") undoOrRedo(action);
       if (action === "show-suggestions") showSuggestions();
       if (action === "open-settings") setSettingsOpen(true);
@@ -752,6 +764,9 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     { label: "File: New Markdown Note", run: () => newNote("markdown") },
     { label: "File: Export as PDF…", run: () => exportPdf() },
     { label: `View: ${showPages ? "Hide" : "Show"} Pages`, run: toggleShowPages },
+    ...(noteFormat(activePath(panes) ?? "") === "typst"
+      ? [{ label: `View: ${codeNotes.has(activePath(panes)!) ? "Show Formatted" : "Show Code"}`, run: () => toggleCode() }]
+      : []),
     { label: `View: ${layout.mode === "pinned" ? "Unpin" : "Pin"} File Explorer`, run: togglePinned },
     { label: "View: Move File Explorer to Other Side", run: moveToOtherSide },
     { label: "View: Open Graph View", run: openGraph },
@@ -790,7 +805,10 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
             roomForWindowButtons={layout.side === "right"}
             tabMenu={(tab) =>
               tab.kind === "note" && noteFormat(tab.path) === "typst"
-                ? [{ label: showPages ? "Hide Pages" : "Show Pages", icon: mdiFileDocumentMultipleOutline, run: toggleShowPages }]
+                ? [
+                    { label: showPages ? "Hide Pages" : "Show Pages", icon: mdiFileDocumentMultipleOutline, run: toggleShowPages },
+                    { label: codeNotes.has(tab.path) ? "Show Formatted" : "Show Code", icon: mdiCodeTags, run: () => toggleCode(tab.path) },
+                  ]
                 : []
             }
             label={(tab) =>
@@ -829,6 +847,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
                   path={tab.path}
                   autosave={autosave}
                   showPages={showPages}
+                  showCode={codeNotes.has(tab.path)}
                   onExportPdf={() => exportPdf(tab.path)}
                   reveal={reveal?.path === tab.path ? reveal : undefined}
                   goTo={goTo?.path === tab.path ? goTo : undefined}

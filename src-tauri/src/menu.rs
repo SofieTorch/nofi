@@ -21,9 +21,10 @@ const GRAPH_VIEW: &str = "graph-view";
 const CLOSE_PANE: &str = "close-pane";
 const EXPORT_PDF: &str = "export-pdf";
 const CLOSE_TAB: &str = "close-tab";
+const TOGGLE_CODE: &str = "toggle-code";
 const CLOSE_WINDOW: &str = "close-window";
 
-const ACTIONS: [&str; 17] = [
+const ACTIONS: [&str; 18] = [
     NEW_NOTE,
     NEW_MARKDOWN_NOTE,
     NEW_BOARD,
@@ -41,6 +42,7 @@ const ACTIONS: [&str; 17] = [
     CLOSE_PANE,
     EXPORT_PDF,
     CLOSE_TAB,
+    TOGGLE_CODE,
 ];
 
 /// Items that only make sense while a workspace is open.
@@ -52,6 +54,7 @@ struct WorkspaceItems {
     pin_explorer: CheckMenuItem<Wry>,
     move_explorer: MenuItem<Wry>,
     show_pages: CheckMenuItem<Wry>,
+    show_code: MenuItem<Wry>,
     go_to_file: MenuItem<Wry>,
     command_palette: MenuItem<Wry>,
     graph_view: MenuItem<Wry>,
@@ -83,6 +86,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         )?,
         graph_view: MenuItem::with_id(app, GRAPH_VIEW, "Graph View", false, Some("CmdOrCtrl+Shift+G"))?,
         close_pane: MenuItem::with_id(app, CLOSE_PANE, "Close Pane", false, None::<&str>)?,
+        // A Typst note shown as code (its raw text, highlighted), or formatted again.
+        show_code: MenuItem::with_id(app, TOGGLE_CODE, "Show Code", false, Some("CmdOrCtrl+Alt+C"))?,
         export_pdf: MenuItem::with_id(app, EXPORT_PDF, "Export as PDF…", false, Some("CmdOrCtrl+Shift+E"))?,
         pin_explorer: CheckMenuItem::with_id(
             app,
@@ -158,10 +163,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     view.insert(&items.move_explorer, 3)?;
     view.insert(&PredefinedMenuItem::separator(app)?, 4)?;
     view.insert(&items.show_pages, 5)?;
-    view.insert(&items.graph_view, 6)?;
-    view.insert(&PredefinedMenuItem::separator(app)?, 7)?;
-    view.insert(&items.close_pane, 8)?;
-    view.insert(&PredefinedMenuItem::separator(app)?, 9)?;
+    view.insert(&items.show_code, 6)?;
+    view.insert(&items.graph_view, 7)?;
+    view.insert(&PredefinedMenuItem::separator(app)?, 8)?;
+    view.insert(&items.close_pane, 9)?;
+    view.insert(&PredefinedMenuItem::separator(app)?, 10)?;
 
     // Settings: in the app's own menu on a Mac (like every Mac app), in File elsewhere.
     let settings = MenuItem::with_id(app, OPEN_SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))?;
@@ -226,6 +232,7 @@ pub fn set_workspace_open(app: &AppHandle, open: bool) {
         let _ = items.new_markdown_note.set_enabled(open);
         let _ = items.new_board.set_enabled(open);
         let _ = items.close.set_enabled(open);
+        let _ = items.show_code.set_enabled(open);
         let _ = items.pin_explorer.set_enabled(open);
         let _ = items.move_explorer.set_enabled(open);
         let _ = items.show_pages.set_enabled(open);

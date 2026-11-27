@@ -36,6 +36,7 @@ import { copyAddress, followLinkTarget, resolvePath, workspaceNotes } from "../e
 import { NoteNameDialog, suggestedName } from "../pdf/NoteNameDialog";
 import { type Choice, NotePicker } from "../pdf/NotePicker";
 import { FindBar, matchesIn } from "../ui/FindBar";
+import { stopScaling, usePinchZoom } from "../ui/pinchZoom";
 import { IconButton } from "../ui/IconButton";
 import { sidebarRight } from "../ui/icons";
 import { Menu } from "../ui/Menu";
@@ -670,7 +671,7 @@ export function PdfView({
     // Zoomed by pinching: the point that was under the pointer stays under it.
     const pinched = pinchedAt.current;
     pinchedAt.current = null;
-    if (pagesBox.current) pagesBox.current.style.transform = "";
+    stopScaling(pagesBox.current);
     const pinchedPage = pinched && pageBoxes.current.get(pinched.page);
     if (box && pinched && pinchedPage) {
       const now = pinchedPage.getBoundingClientRect();
@@ -703,21 +704,15 @@ export function PdfView({
    * when it ends, they're drawn again at that zoom. The point under the pointer stays under it.
    */
   const pagesBox = useRef<HTMLDivElement>(null);
-  type Pinch = { by: number; startedBy: number; timer?: number };
-  const pinch = useRef<Pinch | null>(null);
   /** Where the pinch started: a page, the point on it (in its points), and where that is in the window. */
   const pinchedAt = useRef<{ page: number; x: number; y: number; clientX: number; clientY: number } | null>(null);
-  const scaleNow = useRef(scale);
-  scaleNow.current = scale;
-  useEffect(() => {
-    const box = scroller.current;
-    if (!box) return;
-    const begin = (clientX: number, clientY: number): Pinch | null => {
-      if (pinch.current) return pinch.current;
-      const pages = pagesBox.current;
-      if (!pages) return null;
-      const content = pages.getBoundingClientRect();
-      pages.style.transformOrigin = `${clientX - content.left}px ${clientY - content.top}px`;
+  usePinchZoom({
+    scroller,
+    content: pagesBox,
+    scale,
+    smallest: SMALLEST,
+    biggest: BIGGEST,
+    onStart: (clientX, clientY) => {
       // The page under the pointer (or the closest one).
       let closest: { page: number; rect: DOMRect; off: number } | null = null;
       for (const [page, element] of pageBoxes.current) {
@@ -727,73 +722,17 @@ export function PdfView({
       }
       pinchedAt.current = closest && {
         page: closest.page,
-        x: (clientX - closest.rect.left) / scaleNow.current,
-        y: (clientY - closest.rect.top) / scaleNow.current,
+        x: (clientX - closest.rect.left) / scale,
+        y: (clientY - closest.rect.top) / scale,
         clientX,
         clientY,
       };
-      return (pinch.current = { by: 1, startedBy: 1 });
-    };
-    const show = (gesture: Pinch, by: number) => {
-      gesture.by = Math.min(BIGGEST / scaleNow.current, Math.max(SMALLEST / scaleNow.current, by));
-      if (pagesBox.current) pagesBox.current.style.transform = `scale(${Number(gesture.by.toFixed(4))})`;
-    };
-    const finish = () => {
-      const gesture = pinch.current;
-      pinch.current = null;
-      if (!gesture) return;
-      window.clearTimeout(gesture.timer);
-      const next = Math.round(scaleNow.current * gesture.by * 100) / 100;
-      if (next === Math.round(scaleNow.current * 100) / 100) {
-        pinchedAt.current = null;
-        if (pagesBox.current) pagesBox.current.style.transform = "";
-        return;
-      }
-      setZoom(next);
-    };
-    // A trackpad's pinch comes as the wheel with Ctrl held (in Chromium, and on Windows and Linux);
-    // a mouse's wheel with ⌘ or Ctrl held zooms too.
-    const wheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      event.preventDefault();
-      const gesture = begin(event.clientX, event.clientY);
-      if (!gesture) return;
-      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
-      show(gesture, gesture.by * Math.min(1.25, Math.max(0.8, Math.exp(-delta / 100))));
-      window.clearTimeout(gesture.timer);
-      gesture.timer = window.setTimeout(finish, 150);
-    };
-    // Safari's webview (the app on a Mac) sends gesture events, with how much bigger it is now.
-    type Gesture = Event & { scale?: number; clientX?: number; clientY?: number };
-    const centre = () => {
-      const rect = box.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    };
-    const gestureStart = (event: Gesture) => {
-      event.preventDefault();
-      const gesture = begin(event.clientX ?? centre().x, event.clientY ?? centre().y);
-      if (gesture) gesture.startedBy = gesture.by;
-    };
-    const gestureChange = (event: Gesture) => {
-      event.preventDefault();
-      if (pinch.current) show(pinch.current, pinch.current.startedBy * (event.scale ?? 1));
-    };
-    const gestureEnd = (event: Gesture) => {
-      event.preventDefault();
-      finish();
-    };
-    box.addEventListener("wheel", wheel, { passive: false });
-    box.addEventListener("gesturestart", gestureStart);
-    box.addEventListener("gesturechange", gestureChange);
-    box.addEventListener("gestureend", gestureEnd);
-    return () => {
-      box.removeEventListener("wheel", wheel);
-      box.removeEventListener("gesturestart", gestureStart);
-      box.removeEventListener("gesturechange", gestureChange);
-      box.removeEventListener("gestureend", gestureEnd);
-      window.clearTimeout(pinch.current?.timer);
-    };
-  }, []);
+    },
+    onZoom: setZoom,
+    onCancel: () => {
+      pinchedAt.current = null;
+    },
+  });
 
   const step = (direction: 1 | -1) => {
     const next = direction > 0 ? ZOOMS.find((z) => z > scale + 0.01) : [...ZOOMS].reverse().find((z) => z < scale - 0.01);
@@ -905,9 +844,9 @@ export function PdfView({
         if (event.button === 3 && trail.length) goBack();
       }}
     >
-      <div role="toolbar" aria-label="PDF" className="flex h-8 shrink-0 items-center gap-1 border-b border-neutral-100 px-3 text-xs text-neutral-500">
+      <div role="toolbar" aria-label="PDF" className="flex h-7 shrink-0 items-center gap-px border-b border-neutral-100 px-2 text-[11px] text-neutral-500">
         {outline.length > 0 && (
-          <IconButton
+          <IconButton small
             icon={mdiTableOfContents}
             label="Contents"
             pressed={showContents}
@@ -918,7 +857,7 @@ export function PdfView({
           />
         )}
         {trail.length > 0 && (
-          <IconButton icon={mdiArrowLeft} label={`Back to page ${trail[trail.length - 1].page}`} onClick={goBack} />
+          <IconButton small icon={mdiArrowLeft} label={`Back to page ${trail[trail.length - 1].page}`} onClick={goBack} />
         )}
         {document && (
           <PageBox
@@ -933,12 +872,12 @@ export function PdfView({
         <span className="ml-auto" aria-live="polite">
           {Math.round(scale * 100)}%
         </span>
-        <IconButton icon={mdiMagnifyMinusOutline} label="Zoom out" onClick={() => step(-1)} />
-        <IconButton icon={mdiMagnifyPlusOutline} label="Zoom in" onClick={() => step(1)} />
-        <IconButton icon={mdiArrowExpandHorizontal} label="Fit width" pressed={zoom === "fit"} onClick={() => setZoom("fit")} />
-        <IconButton icon={mdiLinkVariant} label="Copy link to this page" onClick={() => copyLink(pageInView())} />
+        <IconButton small icon={mdiMagnifyMinusOutline} label="Zoom out" onClick={() => step(-1)} />
+        <IconButton small icon={mdiMagnifyPlusOutline} label="Zoom in" onClick={() => step(1)} />
+        <IconButton small icon={mdiArrowExpandHorizontal} label="Fit width" pressed={zoom === "fit"} onClick={() => setZoom("fit")} />
+        <IconButton small icon={mdiLinkVariant} label="Copy link to this page" onClick={() => copyLink(pageInView())} />
         {citations.length > 0 && (
-          <IconButton
+          <IconButton small
             icon={sidebarRight}
             label="Show notes in the margin"
             pressed={showMargin}
@@ -949,14 +888,14 @@ export function PdfView({
           />
         )}
         {showMargin && citations.some((c) => !c.source) && (
-          <IconButton
+          <IconButton small
             icon={mdiCommentMultipleOutline}
             label="Show mentions from other notes"
             pressed={showMentions}
             onClick={() => setShowMentions(!showMentions)}
           />
         )}
-        <IconButton
+        <IconButton small
           icon={mdiNotePlusOutline}
           label="Add a note on the page"
           pressed={placingNote}
@@ -966,7 +905,7 @@ export function PdfView({
             setArea(null);
           }}
         />
-        <IconButton
+        <IconButton small
           icon={mdiSelectDrag}
           label="Select an area"
           pressed={choosingArea}

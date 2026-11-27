@@ -2,7 +2,8 @@
 
 use crate::typst_world::{readable, NoteWorld};
 use serde::Serialize;
-use typst::layout::{Abs, Point};
+use typst::layout::{Abs, Frame, FrameItem, Point, Transform};
+use typst::syntax::{Source, SyntaxKind};
 use typst::WorldExt;
 use typst_ide::{jump_from_click_in_frame, Jump};
 use typst_layout::PagedDocument;
@@ -13,6 +14,17 @@ pub struct PagePicture {
     pub svg: String,
     pub width: f64,
     pub height: f64,
+}
+
+/// A place in the note's text on its pages: where the text is (in UTF-16 code units, as the editor
+/// counts), the page (from 0), and how far down and across it (in points from the page's top left).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Place {
+    pub offset: usize,
+    pub page: usize,
+    pub y: f64,
+    /// How far across the page (points from its left): which column, in columns.
+    pub x: f64,
 }
 
 /// A note drawn as pages. Kept around so clicks on the pages can be traced back to the text.
@@ -80,6 +92,21 @@ impl Pages {
         std::fs::write(destination, self.pdf()?).map_err(|e| format!("Couldn't save the PDF: {e}"))
     }
 
+    /// Where the note's text is on its pages, for scrolling the editor and the pages together: a
+    /// place for each piece of text Typst laid out, in the note's order. Text laid out elsewhere
+    /// than the note's order (a header on every page, a figure floated to another page) is left
+    /// out: the places kept are the longest run of them, page after page, in the note's order.
+    pub fn places(&self) -> Vec<Place> {
+        let source = self.world.source_text();
+        let mut found = Vec::new();
+        for (index, page) in self.document.pages().iter().enumerate() {
+            collect_places(&page.frame, Transform::identity(), source, index, &mut found);
+        }
+        // Page by page, in the note's order on each (in columns, a page's text isn't top to bottom).
+        found.sort_by_key(|place| (place.page, place.offset));
+        in_order(found)
+    }
+
     /// Where in the note's text a click on a page lands (`x` and `y` in points from the page's
     /// top left). Counted in UTF-16 code units, like the editor counts characters.
     pub fn position_at(&self, page: usize, x: f64, y: f64) -> Option<usize> {
@@ -92,6 +119,60 @@ impl Pages {
             _ => None,
         }
     }
+}
+
+/// The places in a frame (and the frames in it), where `ts` puts the frame on its page.
+fn collect_places(frame: &Frame, ts: Transform, source: &Source, page: usize, found: &mut Vec<Place>) {
+    for (pos, item) in frame.items() {
+        match item {
+            FrameItem::Group(group) => {
+                let inner = ts.pre_concat(Transform::translate(pos.x, pos.y)).pre_concat(group.transform);
+                collect_places(&group.frame, inner, source, page, found);
+            }
+            FrameItem::Text(text) => {
+                let Some(glyph) = text.glyphs.first() else { continue };
+                let (span, span_offset) = glyph.span;
+                if span.id() != Some(source.id()) {
+                    continue;
+                }
+                let Some(node) = source.find(span) else { continue };
+                let byte = if matches!(node.kind(), SyntaxKind::Text | SyntaxKind::MathText) {
+                    node.range().start + usize::from(span_offset)
+                } else {
+                    node.range().start
+                };
+                let Some(offset) = source.lines().byte_to_utf16(byte) else { continue };
+                // (The line's top: a text's position is its baseline.)
+                let top = Point::new(pos.x, pos.y - text.size).transform(ts);
+                found.push(Place { offset, page, y: top.y.to_pt().max(0.0), x: top.x.to_pt().max(0.0) });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The longest run of places (in the order given) whose offsets keep growing.
+fn in_order(places: Vec<Place>) -> Vec<Place> {
+    // Patience sorting: `ends[k]` is the place ending the best run of k + 1 so far.
+    let mut ends: Vec<usize> = Vec::new();
+    let mut before: Vec<Option<usize>> = vec![None; places.len()];
+    for (i, place) in places.iter().enumerate() {
+        let k = ends.partition_point(|&e| places[e].offset < place.offset);
+        before[i] = if k > 0 { Some(ends[k - 1]) } else { None };
+        if k == ends.len() {
+            ends.push(i);
+        } else {
+            ends[k] = i;
+        }
+    }
+    let mut run = Vec::new();
+    let mut at = ends.last().copied();
+    while let Some(i) = at {
+        run.push(places[i].clone());
+        at = before[i];
+    }
+    run.reverse();
+    run
 }
 
 /// Typst writes links' addresses into the SVG as they are, so a link to `x.pdf#page=3&quote=…`

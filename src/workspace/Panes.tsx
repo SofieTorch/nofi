@@ -194,7 +194,7 @@ function GroupView({ group, layout, onChange, content, empty, label, title, tabM
         }}
         // (Its empty part moves the window: there's no title bar.)
         data-tauri-drag-region
-        className={`flex h-10 shrink-0 items-center gap-0.5 border-b border-neutral-100 pr-1.5 ${topLeft && isMac ? "pl-20" : "pl-1.5"} ${
+        className={`flex h-8 shrink-0 items-center gap-0.5 border-b border-neutral-100 pr-1 ${topLeft && isMac ? "pl-20" : "pl-1"} ${
           active ? "" : "opacity-80"
         }`}
       >
@@ -241,7 +241,7 @@ function GroupView({ group, layout, onChange, content, empty, label, title, tabM
                   event.stopPropagation();
                   drop({ group: group.id, index: beforeTab ?? i });
                 }}
-                className={`group/tab relative flex h-7 max-w-48 shrink-0 cursor-default items-center gap-1 rounded-md pr-1 pl-2.5 text-[13px] select-none ${
+                className={`group/tab relative flex h-6 max-w-48 shrink-0 cursor-default items-center gap-1 rounded-md pr-1 pl-2 text-xs select-none ${
                   shown ? "bg-neutral-100 text-neutral-800" : "text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
                 }`}
               >
@@ -268,7 +268,7 @@ function GroupView({ group, layout, onChange, content, empty, label, title, tabM
           })}
         </div>
         {groups(layout).length > 1 && (
-          <IconButton icon={mdiCloseBoxMultipleOutline} label="Close pane" onClick={() => onChange((current) => closeGroup(current, group.id))} />
+          <IconButton small icon={mdiCloseBoxMultipleOutline} label="Close pane" onClick={() => onChange((current) => closeGroup(current, group.id))} />
         )}
       </div>
       <div

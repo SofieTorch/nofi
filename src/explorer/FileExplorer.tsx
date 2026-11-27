@@ -288,14 +288,15 @@ export function FileExplorer({
       />
       {/* Its top row, as tall as the tabs' (it moves the window): New note and Pin on the right; on
           the left of the window, room for the window's buttons (on a Mac), centred with them. */}
-      <div role="toolbar" aria-label="Sidebar" data-tauri-drag-region className="flex h-10 shrink-0 items-center justify-end gap-0.5 pr-1.5">
+      <div role="toolbar" aria-label="Sidebar" data-tauri-drag-region className="flex h-8 shrink-0 items-center justify-end gap-0.5 pr-1">
         <IconButton
+          small
           icon={mdiMagnify}
           label="Search the workspace"
           pressed={search.open}
           onClick={search.open ? search.onClose : search.onOpen}
         />
-        <IconButton icon={sidebarLeft} label="Pin file explorer" pressed={pinned} onClick={onTogglePinned} />
+        <IconButton small icon={sidebarLeft} label="Pin file explorer" pressed={pinned} onClick={onTogglePinned} />
       </div>
       {search.open && <SearchPanel files={files} focusSignal={search.focus} onOpen={search.onOpenMatch} onClose={search.onClose} />}
       <div ref={sections} className={`min-h-0 flex-1 flex-col ${search.open ? "hidden" : "flex"}`}>

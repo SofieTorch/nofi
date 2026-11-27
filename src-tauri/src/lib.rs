@@ -376,7 +376,7 @@ fn show_window_buttons(window: tauri::WebviewWindow, shown: bool, fade: Option<b
 #[cfg(target_os = "macos")]
 mod window_buttons {
     use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext, NSButton, NSWindow, NSWindowButton};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Duration;
 
     /// How long the sidebar takes to slide in (see FileExplorer.tsx): they fade in after it.
@@ -386,6 +386,26 @@ mod window_buttons {
     /// Counts changes: a later step (fading in after the slide, hiding after fading out) only
     /// happens if nothing changed since.
     static CHANGES: AtomicU64 = AtomicU64::new(0);
+    /// Whether the app wants them shown (the sidebar's say): in full screen, they're always the
+    /// system's to show (moving to the screen's top brings them, with the menu bar).
+    static WANTED: AtomicBool = AtomicBool::new(true);
+
+    fn full_screen(window: &tauri::WebviewWindow) -> bool {
+        window.is_fullscreen().unwrap_or(false)
+    }
+
+    fn set_hidden(window: &tauri::WebviewWindow, hidden: bool) {
+        for button in buttons_of(window) {
+            button.setAlphaValue(1.0);
+            button.setHidden(hidden);
+        }
+    }
+
+    /// After the window went full screen or back: shown in full screen, as the app wants otherwise.
+    pub fn refresh(window: &tauri::WebviewWindow) {
+        CHANGES.fetch_add(1, Ordering::SeqCst);
+        set_hidden(window, !WANTED.load(Ordering::SeqCst) && !full_screen(window));
+    }
 
     fn buttons_of(window: &tauri::WebviewWindow) -> Vec<objc2::rc::Retained<NSButton>> {
         let Ok(pointer) = window.ns_window() else { return Vec::new() };
@@ -422,9 +442,14 @@ mod window_buttons {
 
     pub fn show(window: &tauri::WebviewWindow, shown: bool, fade: bool) -> Result<(), String> {
         let change = CHANGES.fetch_add(1, Ordering::SeqCst) + 1;
+        WANTED.store(shown, Ordering::SeqCst);
         let target = window.clone();
         window
             .run_on_main_thread(move || {
+                if full_screen(&target) {
+                    set_hidden(&target, false);
+                    return;
+                }
                 let buttons = buttons_of(&target);
                 if !fade {
                     for button in &buttons {
@@ -444,10 +469,7 @@ mod window_buttons {
                     // As it starts to leave; then hidden, so they can't be clicked.
                     fade_to(&target, 0.0);
                     later(&target, change, Duration::from_secs_f64(FADE + 0.02), |window| {
-                        for button in buttons_of(window) {
-                            button.setHidden(true);
-                            button.setAlphaValue(1.0);
-                        }
+                        set_hidden(window, !full_screen(window));
                     });
                 }
             })
@@ -633,6 +655,12 @@ fn page_position(open: State<OpenPages>, page: usize, x: f64, y: f64) -> Option<
     open.0.lock().unwrap().as_ref()?.position_at(page, x, y)
 }
 
+/// Where the note last drawn as pages has its text on them (for scrolling the two together).
+#[tauri::command]
+fn page_places(open: State<OpenPages>) -> Vec<pages::Place> {
+    open.0.lock().unwrap().as_ref().map(|drawn| drawn.places()).unwrap_or_default()
+}
+
 /// Draws a table, figure or grid (as written in the note) as an SVG picture for the writing view.
 #[tauri::command]
 async fn render_block(block: String) -> Result<String, String> {
@@ -674,6 +702,15 @@ pub fn run() {
             Ok(())
         })
         .on_menu_event(|app, event| menu::handle_event(app, event.id().as_ref()))
+        // Going full screen or back: the window's buttons are the system's there, the app's again after.
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let (tauri::WindowEvent::Resized(_), Some(webview)) = (event, window.app_handle().get_webview_window(window.label())) {
+                window_buttons::refresh(&webview);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
+        })
         .invoke_handler(tauri::generate_handler![
             get_last_workspace,
             open_workspace,
@@ -702,6 +739,7 @@ pub fn run() {
             save_show_pages,
             render_pages,
             page_position,
+            page_places,
             export_pdf,
             remove_empty_note,
             restore_empty_note,

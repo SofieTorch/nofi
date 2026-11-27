@@ -1,6 +1,7 @@
 import { findInNote } from "./findInNote";
-import { defaultKeymap, history, historyField, historyKeymap } from "@codemirror/commands";
-import { EditorState } from "@codemirror/state";
+import { defaultKeymap, history, historyField, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { codeView } from "./codeView";
+import { EditorState, type StateField } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { type RefObject, useEffect, useRef } from "react";
 import type { Format } from "./formatting";
@@ -23,6 +24,8 @@ type Props = {
   onProblems?: (problems: Problem[]) => void;
   /** Gives access to the editor, e.g. to move the cursor from outside. */
   viewRef?: RefObject<EditorView | null>;
+  /** Shown as code: the file as it is, highlighted, with line numbers (a Typst note's code view). */
+  code?: boolean;
 };
 
 /** A CodeMirror editor for one note. Remount it (with `key`) to edit another note. */
@@ -34,6 +37,7 @@ export function NoteEditor({
   onChange,
   onProblems,
   viewRef,
+  code = false,
 }: Props) {
   const parent = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
@@ -44,10 +48,10 @@ export function NoteEditor({
   useEffect(() => {
     const extensions = [
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
-      EditorView.contentAttributes.of({ "aria-label": name, spellcheck: "true" }),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...(code ? [indentWithTab] : [])]),
+      EditorView.contentAttributes.of({ "aria-label": name, spellcheck: code ? "false" : "true" }),
       notePath.of(historyKey),
-      editorFeatures(format),
+      code ? codeView() : editorFeatures(format),
       findInNote(),
       format === "typst" ? typstProblems((problems) => onProblemsRef.current?.(problems)) : [],
       EditorView.updateListener.of((update) => {
@@ -57,13 +61,11 @@ export function NoteEditor({
       }),
     ];
     // Pick up where this note was left, undo history included, if its text is unchanged.
+    // (Switching to the code view and back keeps it too; collapsed headings are the formatted view's.)
     const saved = recallNoteState(historyKey, initialText);
+    const fields: Record<string, StateField<unknown>> = code ? { history: historyField } : { history: historyField, folds: headingFoldsField };
     const state = saved
-      ? EditorState.fromJSON(
-          saved.toJSON({ history: historyField, folds: headingFoldsField }),
-          { extensions },
-          { history: historyField, folds: headingFoldsField },
-        )
+      ? EditorState.fromJSON(saved.toJSON(fields), { extensions }, fields)
       : EditorState.create({ doc: initialText, extensions });
     const view = new EditorView({ parent: parent.current!, state });
     if (viewRef) viewRef.current = view;

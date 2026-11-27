@@ -241,3 +241,71 @@ mod exporting_a_pdf {
         assert!(String::from_utf8_lossy(&pdf).contains("Attention"));
     }
 }
+
+/// Spec: where the note's text is on its pages, for scrolling the editor and the pages together.
+/// Places go in the note's order (text Typst puts elsewhere, like a header repeated on every page,
+/// is left out), each with its page, how far down it and how far across (in points from the page's
+/// top left). In columns, the next column's text is higher up again, and to the right.
+mod scroll_places {
+    use super::*;
+
+    #[test]
+    fn each_line_has_a_place_lower_down_the_page() {
+        let note = format!("{SMALL_PAGE}First line.\n\nSecond paragraph.\n\nThird paragraph.");
+        let pages = render_pages(&note).unwrap();
+
+        let places = pages.places();
+
+        let at = |text: &str| places.iter().find(|p| p.offset == note.find(text).unwrap()).unwrap_or_else(|| panic!("no place for {text}"));
+        let (first, second, third) = (at("First"), at("Second"), at("Third"));
+        assert!(first.y < second.y && second.y < third.y, "{places:?}");
+        assert_eq!((first.page, third.page), (0, 0));
+        assert!(first.y >= 0.0 && first.y < 10.0, "{first:?}");
+    }
+
+    #[test]
+    fn text_after_a_page_break_is_at_the_top_of_the_next_page() {
+        let note = "#set page(width: 200pt, height: 200pt, margin: 20pt)\nOne.\n#pagebreak()\nTwo.";
+        let places = render_pages(note).unwrap().places();
+
+        let two = places.iter().find(|p| p.offset == note.find("Two").unwrap()).unwrap();
+        assert_eq!(two.page, 1);
+        assert!(two.y < 40.0, "{two:?}");
+    }
+
+    #[test]
+    fn places_go_in_the_notes_order_even_with_a_header_on_every_page() {
+        let note = "#set page(width: 200pt, height: 200pt, margin: 30pt, header: [Running head])\nOne.\n#pagebreak()\nTwo.\n#pagebreak()\nThree.";
+        let places = render_pages(note).unwrap().places();
+
+        assert!(places.windows(2).all(|w| w[0].offset < w[1].offset && w[0].page <= w[1].page), "{places:?}");
+        let pages: Vec<usize> = ["One", "Two", "Three"].iter().map(|t| places.iter().find(|p| p.offset == note.find(t).unwrap()).unwrap().page).collect();
+        assert_eq!(pages, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn offsets_count_characters_as_the_editor_does() {
+        // ("é" and "—" are one character each in the editor, more bytes in Typst.)
+        let note = format!("{SMALL_PAGE}Café — first.\n\nSecond.");
+        let places = render_pages(&note).unwrap().places();
+
+        let utf16 = note[..note.find("Second").unwrap()].encode_utf16().count();
+        assert!(places.iter().any(|p| p.offset == utf16), "{places:?}");
+    }
+
+    #[test]
+    fn in_two_columns_the_second_columns_text_is_up_again_and_to_the_right() {
+        let note = "#set page(width: 300pt, height: 200pt, margin: 10pt, columns: 2)\n#set text(size: 10pt)\n"
+            .to_string()
+            + &(1..=30).map(|n| format!("Line {n} of the text.")).collect::<Vec<_>>().join("\n\n");
+        let places = render_pages(&note).unwrap().places();
+
+        let first = places.iter().find(|p| p.offset == note.find("Line 1 ").unwrap()).unwrap();
+        // The second column's first line: as high up as the first's, to the right, and after it in the note.
+        let second_column = places.iter().find(|p| p.page == 0 && p.x > first.x + 100.0).unwrap_or_else(|| panic!("{places:?}"));
+        assert!(second_column.y < first.y + 1.0, "{first:?} {second_column:?}");
+        assert!(second_column.offset > note.find("Line 5 ").unwrap(), "{second_column:?}");
+        assert!(places.windows(2).all(|w| w[0].offset < w[1].offset));
+    }
+}
+

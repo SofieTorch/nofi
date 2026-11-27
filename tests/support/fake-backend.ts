@@ -94,6 +94,7 @@ export function setUpFakeBackend() {
   vi.mocked(api.saveShowPages).mockResolvedValue();
   vi.mocked(api.renderPages).mockResolvedValue([]);
   vi.mocked(api.pagePosition).mockResolvedValue(null);
+  vi.mocked(api.pagePlaces).mockResolvedValue([]);
   vi.mocked(api.pickPdfDestination).mockResolvedValue(null);
   vi.mocked(api.exportPdf).mockResolvedValue();
   vi.mocked(api.closeWindow).mockResolvedValue();
@@ -114,6 +115,7 @@ const menuItems = {
   "View › Pin File Explorer": "toggle-explorer-pinned",
   "View › Move File Explorer to Other Side": "move-explorer-to-other-side",
   "View › Show Pages": "toggle-pages",
+  "View › Show Code": "toggle-code",
   "Edit › Undo": "undo",
   "Edit › Redo": "redo",
   "Edit › Show Suggestions": "show-suggestions",

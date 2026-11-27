@@ -7,20 +7,22 @@ type Props = {
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   /** For toggle buttons: whether the option is currently on. */
   pressed?: boolean;
+  /** Smaller, for compact toolbars (like a PDF's or a note's pages'). */
+  small?: boolean;
 };
 
-export function IconButton({ icon, label, onClick, pressed }: Props) {
+export function IconButton({ icon, label, onClick, pressed, small = false }: Props) {
   return (
     <button
       onClick={onClick}
       aria-label={label}
       aria-pressed={pressed}
       title={label}
-      className={`flex size-7 items-center justify-center rounded-md transition-colors hover:bg-neutral-100 ${
+      className={`flex ${small ? "size-6" : "size-7"} shrink-0 items-center justify-center rounded-md transition-colors hover:bg-neutral-100 ${
         pressed === false ? "text-neutral-400" : "text-neutral-700"
       }`}
     >
-      <Icon path={icon} size="18px" />
+      <Icon path={icon} size={small ? "15px" : "18px"} />
     </button>
   );
 }

@@ -44,6 +44,7 @@ export type MenuAction =
   | "toggle-explorer-pinned"
   | "move-explorer-to-other-side"
   | "toggle-pages"
+  | "toggle-code"
   | "undo"
   | "redo"
   | "show-suggestions"
@@ -203,6 +204,17 @@ export function renderPages(note: string, path?: string): Promise<PagePicture[]>
  * Where in the note's text a click on one of its last drawn pages lands (`x`, `y` in points from
  * the page's top left), counted like the editor counts characters. Null if there's no text there.
  */
+/**
+ * A place in a note's text on its pages: the text (as the editor counts), its page (from 0), and
+ * how far down and across it (points).
+ */
+export type PagePlace = { offset: number; page: number; y: number; x?: number };
+
+/** Where the note last drawn as pages has its text on them, in the note's order. */
+export function pagePlaces(): Promise<PagePlace[]> {
+  return invoke("page_places");
+}
+
 export function pagePosition(page: number, x: number, y: number): Promise<number | null> {
   return invoke("page_position", { page, x, y });
 }
