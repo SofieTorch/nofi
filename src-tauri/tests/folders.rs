@@ -4,7 +4,7 @@
 //! ever touched.
 
 use marginalia_lib::folders::*;
-use marginalia_lib::layout::{load_open_folders, save_open_folders};
+use marginalia_lib::layout::{load_open_folders, load_open_in_library, save_open_folders, save_open_in_library};
 use marginalia_lib::notes::{create_board, create_note_in, NoteFormat, RenameError};
 use marginalia_lib::workspace::open_folder;
 use std::cell::RefCell;
@@ -294,5 +294,22 @@ mod open_folders {
         save_open_folders(workspace.path(), &["Papers".into(), "Papers/Old".into()]).unwrap();
 
         assert_eq!(load_open_folders(workspace.path()), vec!["Papers".to_string(), "Papers/Old".to_string()]);
+    }
+}
+
+mod open_in_library {
+    use super::*;
+
+    #[test]
+    fn which_libraries_and_collections_are_open_is_kept_per_workspace() {
+        let workspace = workspace_with(&[]);
+        assert_eq!(load_open_in_library(workspace.path()), None);
+
+        save_open_in_library(workspace.path(), &["user".into(), "user/collections/THESIS01".into()]).unwrap();
+        assert_eq!(load_open_in_library(workspace.path()), Some(vec!["user".to_string(), "user/collections/THESIS01".to_string()]));
+
+        // (All closed is remembered too: not the same as never changed.)
+        save_open_in_library(workspace.path(), &[]).unwrap();
+        assert_eq!(load_open_in_library(workspace.path()), Some(vec![]));
     }
 }

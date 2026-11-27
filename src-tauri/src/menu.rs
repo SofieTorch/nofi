@@ -107,7 +107,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         show_pages: CheckMenuItem::with_id(
             app,
             TOGGLE_PAGES,
-            "Show Pages",
+            "Show Preview",
             false,
             false,
             Some("CmdOrCtrl+Alt+P"),

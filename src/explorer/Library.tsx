@@ -53,6 +53,21 @@ export function Library({ version, searching, onSearching, settingsAt, onSetting
   const [hidden, setHidden] = useState<string[]>([]);
   /** A library's or collection's right-click menu. */
   const [menu, setMenu] = useState<{ id: string; name: string; at: { x: number; y: number } }>();
+  /**
+   * The open libraries and collections (ids), as left in this workspace; null until read, or if
+   * never changed: then the first library is open, the rest folded.
+   */
+  const [opened, setOpened] = useState<string[] | null>(null);
+  useEffect(() => {
+    let current = true;
+    api.getOpenInLibrary().then(
+      (found) => current && found && setOpened(found),
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let current = true;
@@ -106,7 +121,18 @@ export function Library({ version, searching, onSearching, settingsAt, onSetting
     );
 
   const libraries = shown(state.library.libraries, new Set(hidden));
-  const rows = { highlightedPath, onOpen, onMenu: (id: string, name: string, at: { x: number; y: number }) => setMenu({ id, name, at }) };
+  const open = opened ?? (libraries[0] ? [libraries[0].id] : []);
+  const rows = {
+    highlightedPath,
+    onOpen,
+    onMenu: (id: string, name: string, at: { x: number; y: number }) => setMenu({ id, name, at }),
+    isOpen: (id: string) => open.includes(id),
+    onToggleOpen: (id: string) => {
+      const next = open.includes(id) ? open.filter((o) => o !== id) : [...open, id];
+      setOpened(next);
+      api.saveOpenInLibrary(next).catch(() => {});
+    },
+  };
   const found = query.trim() ? search(libraries, query) : null;
   return (
     <div className="flex flex-col">
@@ -163,7 +189,7 @@ export function Library({ version, searching, onSearching, settingsAt, onSetting
         ) : (
           <ul>
             {libraries.map((library, n) => (
-              <LibraryNode key={library.name + n} library={library} open={n === 0} {...rows} />
+              <LibraryNode key={library.name + n} library={library} {...rows} />
             ))}
           </ul>
         )}
@@ -175,6 +201,9 @@ export function Library({ version, searching, onSearching, settingsAt, onSetting
 type Rows = Pick<Props, "highlightedPath" | "onOpen"> & {
   /** Right-clicking a library or collection (its id and name, and where). */
   onMenu: (id: string, name: string, at: { x: number; y: number }) => void;
+  /** Whether a library or collection (by id) is open, and opening or closing one (remembered). */
+  isOpen: (id: string) => boolean;
+  onToggleOpen: (id: string) => void;
 };
 type ZLibrary = api.ZoteroLibrary["libraries"][number];
 
@@ -215,8 +244,8 @@ function search(libraries: ZLibrary[], query: string) {
     .slice(0, 200);
 }
 
-function LibraryNode({ library, open, ...rows }: Rows & { library: ZLibrary; open: boolean }) {
-  const [expanded, setExpanded] = useState(open);
+function LibraryNode({ library, ...rows }: Rows & { library: ZLibrary }) {
+  const expanded = rows.isOpen(library.id);
   const byId = new Map(library.items.map((paper) => [paper.id, paper]));
   // (A paper in a collection is only shown inside it; the library itself lists those in none.)
   const filed = new Set(library.collections.flatMap((c) => c.items));
@@ -228,7 +257,7 @@ function LibraryNode({ library, open, ...rows }: Rows & { library: ZLibrary; ope
         icon={mdiBookshelf}
         depth={0}
         expanded={expanded}
-        onToggle={() => setExpanded(!expanded)}
+        onToggle={() => rows.onToggleOpen(library.id)}
         onMenu={(at) => rows.onMenu(library.id, library.name, at)}
       />
       {expanded && (
@@ -254,7 +283,8 @@ function CollectionNode({
   depth,
   ...rows
 }: Rows & { collection: api.ZoteroCollection; library: ZLibrary; byId: Map<string, api.ZoteroItem>; depth: number }) {
-  const [expanded, setExpanded] = useState(false);
+  const id = collectionId(library, collection);
+  const expanded = rows.isOpen(id);
   const papers = collection.items
     .map((id) => byId.get(id))
     .filter((p): p is api.ZoteroItem => !!p)
@@ -266,8 +296,8 @@ function CollectionNode({
         icon={expanded ? mdiFolderOpenOutline : mdiFolderOutline}
         depth={depth}
         expanded={expanded}
-        onToggle={() => setExpanded(!expanded)}
-        onMenu={(at) => rows.onMenu(collectionId(library, collection), collection.name, at)}
+        onToggle={() => rows.onToggleOpen(id)}
+        onMenu={(at) => rows.onMenu(id, collection.name, at)}
       />
       {expanded && (
         <ul>

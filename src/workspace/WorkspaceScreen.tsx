@@ -763,7 +763,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     { label: "File: New Board", run: () => newNote("board") },
     { label: "File: New Markdown Note", run: () => newNote("markdown") },
     { label: "File: Export as PDF…", run: () => exportPdf() },
-    { label: `View: ${showPages ? "Hide" : "Show"} Pages`, run: toggleShowPages },
+    { label: `View: ${showPages ? "Hide" : "Show"} Preview`, run: toggleShowPages },
     ...(noteFormat(activePath(panes) ?? "") === "typst"
       ? [{ label: `View: ${codeNotes.has(activePath(panes)!) ? "Show Formatted" : "Show Code"}`, run: () => toggleCode() }]
       : []),
@@ -806,7 +806,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
             tabMenu={(tab) =>
               tab.kind === "note" && noteFormat(tab.path) === "typst"
                 ? [
-                    { label: showPages ? "Hide Pages" : "Show Pages", icon: mdiFileDocumentMultipleOutline, run: toggleShowPages },
+                    { label: showPages ? "Hide Preview" : "Show Preview", icon: mdiFileDocumentMultipleOutline, run: toggleShowPages },
                     { label: codeNotes.has(tab.path) ? "Show Formatted" : "Show Code", icon: mdiCodeTags, run: () => toggleCode(tab.path) },
                   ]
                 : []
@@ -848,6 +848,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
                   autosave={autosave}
                   showPages={showPages}
                   showCode={codeNotes.has(tab.path)}
+                  onHidePages={toggleShowPages}
                   onExportPdf={() => exportPdf(tab.path)}
                   reveal={reveal?.path === tab.path ? reveal : undefined}
                   goTo={goTo?.path === tab.path ? goTo : undefined}

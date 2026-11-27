@@ -155,6 +155,15 @@ export function saveOpenFolders(open: string[]): Promise<void> {
   return invoke("save_open_folders", { open });
 }
 
+/** Which libraries and collections are open in the Library, by id; null if never changed. */
+export function getOpenInLibrary(): Promise<string[] | null> {
+  return invoke("get_open_in_library");
+}
+
+export function saveOpenInLibrary(open: string[]): Promise<void> {
+  return invoke("save_open_in_library", { open });
+}
+
 /**
  * Gives a note a new name, typed without its extension: its format and folder stay the same.
  * Resolves to the note's new path; rejects with a readable reason (e.g. the name is taken).

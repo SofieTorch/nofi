@@ -1,4 +1,4 @@
-import { mdiArrowExpandHorizontal, mdiArrowUpDown, mdiExportVariant, mdiMagnifyMinusOutline, mdiMagnifyPlusOutline, mdiTuneVariant } from "@mdi/js";
+import { mdiArrowExpandHorizontal, mdiClose, mdiArrowUpDown, mdiExportVariant, mdiMagnifyMinusOutline, mdiMagnifyPlusOutline, mdiTuneVariant } from "@mdi/js";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { stopScaling, usePinchZoom } from "../ui/pinchZoom";
 import * as api from "../api";
@@ -31,13 +31,15 @@ type Props = {
   /** Whether it scrolls with the editor (the toolbar's switch). */
   syncing?: boolean;
   onSyncing?: (syncing: boolean) => void;
+  /** Closes the preview (the pages). */
+  onClose?: () => void;
 };
 
 /**
  * The note drawn as real pages by Typst, like the PDF it would become. Redrawn as you type; if
  * the note has a mistake, the last good pages stay up with the mistake explained above them.
  */
-export function PagesPane({ text, path, onJump, onChangeText, onExport, onDrawn, scrollerRef, syncing, onSyncing }: Props) {
+export function PagesPane({ text, path, onJump, onChangeText, onExport, onDrawn, scrollerRef, syncing, onSyncing, onClose }: Props) {
   const onDrawnRef = useRef(onDrawn);
   onDrawnRef.current = onDrawn;
   const [pages, setPages] = useState<api.PagePicture[]>([]);
@@ -181,6 +183,7 @@ export function PagesPane({ text, path, onJump, onChangeText, onExport, onDrawn,
             pressed={showSettings}
             onClick={() => setShowSettings(!showSettings)}
           />
+          {onClose && <IconButton small icon={mdiClose} label="Close preview" onClick={onClose} />}
         </div>
         {showSettings && (
           <PageSettingsPopover

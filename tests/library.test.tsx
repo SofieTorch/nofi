@@ -494,3 +494,34 @@ describe("Hiding in the Library", () => {
     expect(await screen.findByRole("dialog", { name: "Library settings" })).toBeInTheDocument();
   });
 });
+
+describe("Which libraries and collections are open", () => {
+  it("is remembered for the workspace", async () => {
+    await renderOpenWorkspace();
+    const thesis = await library().findByRole("button", { name: "Thesis" });
+
+    await userEvent.click(thesis);
+
+    expect(api.saveOpenInLibrary).toHaveBeenLastCalledWith(["user", "user/collections/THESIS01"]);
+    await userEvent.click(library().getByRole("button", { name: "My Library" }));
+    expect(api.saveOpenInLibrary).toHaveBeenLastCalledWith(["user/collections/THESIS01"]);
+  });
+
+  it("opens as it was left", async () => {
+    vi.mocked(api.getOpenInLibrary).mockResolvedValue(["user", "user/collections/THESIS01", "user/collections/LITREV01", "groups/77"]);
+    await renderOpenWorkspace();
+
+    const thesis = await library().findByRole("button", { name: "Thesis" });
+    await vi.waitFor(() => expect(thesis).toHaveAttribute("aria-expanded", "true"));
+    expect(library().getByRole("button", { name: "Literature review" })).toHaveAttribute("aria-expanded", "true");
+    expect(library().getByRole("button", { name: "Uni projects" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("with nothing remembered, the user's own library is open and the rest folded", async () => {
+    await renderOpenWorkspace();
+
+    expect(await library().findByRole("button", { name: "My Library" })).toHaveAttribute("aria-expanded", "true");
+    expect(library().getByRole("button", { name: "Thesis" })).toHaveAttribute("aria-expanded", "false");
+    expect(library().getByRole("button", { name: "Uni projects" })).toHaveAttribute("aria-expanded", "false");
+  });
+});

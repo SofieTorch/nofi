@@ -116,6 +116,8 @@ export function FileTree(props: Props) {
               <button
                 data-path={entry.path}
                 data-kind="file"
+                // (A long name is cut short: hovering shows it whole.)
+                title={entry.name}
                 onClick={(event) => {
                   onSelect?.(entry.path);
                   if (opens(entry.path)) onOpen?.(entry.path, event.metaKey || event.ctrlKey);
@@ -184,6 +186,7 @@ function FolderItem({ folder, depth, ...props }: Props & { folder: FileEntry; de
         <button
           data-path={folder.path}
           data-kind="folder"
+          title={folder.name}
           aria-expanded={expanded}
           onClick={() => {
             onSelect?.(folder.path);

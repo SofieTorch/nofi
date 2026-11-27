@@ -395,3 +395,18 @@ describe("File explorer: keeping up with the folder", () => {
     await vi.waitFor(() => expect(screen.queryByText("old.typ")).not.toBeInTheDocument());
   });
 });
+
+describe("Long names", () => {
+  it("hovering a file or folder shows its whole name, as a long one is cut short", async () => {
+    const long = "Ray Data - A Dynamic and Scalable System for Heterogeneous Data Processing notes.typ";
+    vi.mocked(api.listFiles).mockResolvedValue([folder("Literature review of distributed data processing engines", [file(`Literature review of distributed data processing engines/${long}`)]), file(long)]);
+    render(<App />);
+
+    const row = await screen.findByRole("button", { name: long });
+    expect(row).toHaveAttribute("title", long);
+    expect(screen.getByRole("button", { name: "Literature review of distributed data processing engines" })).toHaveAttribute(
+      "title",
+      "Literature review of distributed data processing engines",
+    );
+  });
+});

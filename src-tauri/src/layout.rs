@@ -20,6 +20,9 @@ struct LayoutFile {
     /// The explorer's open folders, by path.
     #[serde(default)]
     open_folders: Vec<String>,
+    /// The Library's open libraries and collections, by id; none if never opened or closed yet.
+    #[serde(default)]
+    open_in_library: Option<Vec<String>>,
 }
 
 fn load(workspace: &Path) -> LayoutFile {
@@ -110,4 +113,13 @@ pub fn load_open_folders(workspace: &Path) -> Vec<String> {
 
 pub fn save_open_folders(workspace: &Path, open: &[String]) -> io::Result<()> {
     update(workspace, |data| data.open_folders = open.to_vec())
+}
+
+/// Which libraries and collections are open in the Library; none if that was never changed.
+pub fn load_open_in_library(workspace: &Path) -> Option<Vec<String>> {
+    load(workspace).open_in_library
+}
+
+pub fn save_open_in_library(workspace: &Path, open: &[String]) -> io::Result<()> {
+    update(workspace, |data| data.open_in_library = Some(open.to_vec()))
 }

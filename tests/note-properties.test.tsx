@@ -109,6 +109,16 @@ describe("Seeing a note's properties", () => {
     );
   });
 
+  // The editor works out which line a click is on from the heights of what it shows; space under
+  // the table that it didn't count put every click below it on the line underneath.
+  it("the space under the table is part of the table, so clicks below it land on the line clicked", async () => {
+    const editor = await openNote("Paper.typ");
+    await properties();
+    const widget = editor.querySelector(".cm-properties-widget")!;
+    // (Its margins stay inside it, rather than spilling out where the editor can't measure them.)
+    expect(getComputedStyle(widget).display).toBe("flow-root");
+  });
+
   it("'Edit as text' shows the block itself in the editor, to edit by hand", async () => {
     const editor = await openNote("Paper.md");
     const table = await properties();

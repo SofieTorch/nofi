@@ -509,6 +509,17 @@ fn save_open_folders(current: State<CurrentWorkspace>, open: Vec<String>) -> Res
     layout::save_open_folders(&current.path()?, &open).map_err(|e| e.to_string())
 }
 
+/// Which libraries and collections are open in the sidebar's Library (none: never changed).
+#[tauri::command]
+fn get_open_in_library(current: State<CurrentWorkspace>) -> Option<Vec<String>> {
+    current.path().ok().and_then(|path| layout::load_open_in_library(&path))
+}
+
+#[tauri::command]
+fn save_open_in_library(current: State<CurrentWorkspace>, open: Vec<String>) -> Result<(), String> {
+    layout::save_open_in_library(&current.path()?, &open).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_editor_settings(app: AppHandle) -> workspace::EditorSettings {
     workspace::editor_settings(&settings(&app))
@@ -729,6 +740,8 @@ pub fn run() {
             copy_into,
             get_open_folders,
             save_open_folders,
+            get_open_in_library,
+            save_open_in_library,
             create_board,
             notes_linking_to,
             rename_note,

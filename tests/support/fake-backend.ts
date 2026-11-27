@@ -61,6 +61,8 @@ export function setUpFakeBackend() {
   vi.mocked(api.moveInto).mockImplementation(async (path, folder) => (folder ? `${folder}/` : "") + path.split("/").pop());
   vi.mocked(api.copyInto).mockImplementation(async (path, folder) => (folder ? `${folder}/` : "") + path.split("/").pop());
   vi.mocked(api.getOpenFolders).mockResolvedValue([]);
+  vi.mocked(api.getOpenInLibrary).mockResolvedValue(null);
+  vi.mocked(api.saveOpenInLibrary).mockResolvedValue();
   vi.mocked(api.saveOpenFolders).mockResolvedValue();
   vi.mocked(api.createNoteAt).mockImplementation(async (path) => path);
   vi.mocked(api.searchNotes).mockResolvedValue([]);
@@ -114,7 +116,7 @@ const menuItems = {
   "File › Close Tab": "close-tab",
   "View › Pin File Explorer": "toggle-explorer-pinned",
   "View › Move File Explorer to Other Side": "move-explorer-to-other-side",
-  "View › Show Pages": "toggle-pages",
+  "View › Show Preview": "toggle-pages",
   "View › Show Code": "toggle-code",
   "Edit › Undo": "undo",
   "Edit › Redo": "redo",

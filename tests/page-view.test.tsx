@@ -42,7 +42,7 @@ async function tabMenu(name: string) {
 /** Shows (or hides) the pages from the note's tab's right-click menu. */
 async function togglePagesFromTab(name = "Paper") {
   const menu = await tabMenu(name);
-  await userEvent.click(within(menu).getByRole("menuitem", { name: /^(Show|Hide) Pages$/ }));
+  await userEvent.click(within(menu).getByRole("menuitem", { name: /^(Show|Hide) Preview$/ }));
 }
 const pageView = () => screen.queryByRole("region", { name: "Pages" });
 const findPages = () => within(screen.getByRole("region", { name: "Pages" })).findAllByRole("img");
@@ -54,22 +54,22 @@ describe("The page view", () => {
     expect(pageView()).not.toBeInTheDocument();
   });
 
-  it("right-clicking a Typst note's tab offers Show Pages: the note is shown as pages next to the editor", async () => {
+  it("right-clicking a Typst note's tab offers Show Preview: the note is shown as pages next to the editor", async () => {
     const editor = await openNote("Paper.typ");
 
-    await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Show Pages" }));
+    await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Show Preview" }));
 
     expect(await findPages()).toHaveLength(1);
     expect(api.renderPages).toHaveBeenCalledWith("= Attention\nA study.", expect.any(String));
     expect(editor).toBeInTheDocument();
   });
 
-  it("while they're shown, the tab's menu offers Hide Pages", async () => {
+  it("while they're shown, the tab's menu offers Hide Preview", async () => {
     await openNote("Paper.typ");
     await togglePagesFromTab();
     await findPages();
 
-    await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Hide Pages" }));
+    await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Hide Preview" }));
 
     expect(pageView()).not.toBeInTheDocument();
   });
@@ -79,25 +79,25 @@ describe("The page view", () => {
 
     fireEvent.contextMenu(screen.getByRole("tab", { name: "Todo" }), { clientX: 120, clientY: 40 });
 
-    expect(within(await screen.findByRole("menu")).queryByRole("menuitem", { name: "Show Pages" })).not.toBeInTheDocument();
+    expect(within(await screen.findByRole("menu")).queryByRole("menuitem", { name: "Show Preview" })).not.toBeInTheDocument();
   });
 
   it("the command palette shows and hides them too", async () => {
     await openNote("Paper.typ");
 
     await chooseInMenu("View › Command Palette…");
-    await userEvent.keyboard("Show Pages{Enter}");
+    await userEvent.keyboard("Show Preview{Enter}");
 
     expect(await findPages()).toHaveLength(1);
   });
 
-  it("View › Show Pages shows and hides them too", async () => {
+  it("View › Show Preview shows and hides them too", async () => {
     await openNote("Paper.typ");
 
-    await chooseInMenu("View › Show Pages");
+    await chooseInMenu("View › Show Preview");
     expect(await findPages()).toHaveLength(1);
 
-    await chooseInMenu("View › Show Pages");
+    await chooseInMenu("View › Show Preview");
     expect(pageView()).not.toBeInTheDocument();
   });
 
@@ -318,7 +318,7 @@ describe("Scrolling together", () => {
   /** Opens the note with its pages, laid out: pages 842 tall, 20 apart; the editor's lines 20 tall, a line per 10 characters. */
   async function openWithPages() {
     await openNote("Paper.typ");
-    await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Show Pages" }));
+    await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Show Preview" }));
     const region = await screen.findByRole("region", { name: "Pages" });
     await within(region).findByRole("img", { name: "Page 2" });
     // (What scrolls: the pages, below their toolbar.)
@@ -528,5 +528,18 @@ describe("The code view's width", () => {
     await userEvent.click(within(await tabMenu("Paper")).getByRole("menuitem", { name: "Show Code" }));
 
     await vi.waitFor(() => expect(column()).toHaveClass("max-w-[60rem]"));
+  });
+});
+
+describe("Closing the preview", () => {
+  it("the preview's toolbar has a button to close it", async () => {
+    await openNote("Paper.typ");
+    await togglePagesFromTab();
+    await findPages();
+
+    await userEvent.click(within(screen.getByRole("region", { name: "Pages" })).getByRole("button", { name: "Close preview" }));
+
+    expect(pageView()).not.toBeInTheDocument();
+    expect(api.saveShowPages).toHaveBeenLastCalledWith(false);
   });
 });

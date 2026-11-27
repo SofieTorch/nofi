@@ -110,6 +110,9 @@ export function propertiesField(format: Format) {
 }
 
 const theme = EditorView.theme({
+  // The table's margins stay inside its widget: the editor measures the widget to know where the
+  // lines below it are, and space spilling out of it would put every click on the line underneath.
+  ".cm-properties-widget": { display: "flow-root" },
   ".cm-properties": {
     margin: "0 0 1.25em",
     padding: "0.5em 0",

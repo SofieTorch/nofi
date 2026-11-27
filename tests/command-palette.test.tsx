@@ -172,10 +172,10 @@ describe("Commands (⌘⇧P)", () => {
     expect(api.createNote).toHaveBeenCalledWith("markdown");
   });
 
-  it("and the views, like showing pages", async () => {
+  it("and the views, like showing a note's preview", async () => {
     await openPalette("View › Command Palette…");
 
-    await userEvent.keyboard("show pages{Enter}");
+    await userEvent.keyboard("show preview{Enter}");
 
     expect(api.saveShowPages).toHaveBeenCalledWith(true);
   });

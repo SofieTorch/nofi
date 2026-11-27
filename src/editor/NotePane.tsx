@@ -45,6 +45,8 @@ type Props = {
   showPages: boolean;
   /** Show the note as code (a Typst note's code view), not formatted. */
   showCode?: boolean;
+  /** Closes the preview (the pages, for every note). */
+  onHidePages?: () => void;
   /** Called with whether the note has mistakes (errors), each time it's checked. */
   onMistakes?: (path: string, hasMistakes: boolean) => void;
   /** Text to select (a search match), once the note is shown; selected again for a new object. */
@@ -60,7 +62,7 @@ type Props = {
 };
 
 /** Loads one note and shows it in the editor. Saves what's waiting when it closes. */
-export function NotePane({ path, autosave, showPages, showCode = false, onMistakes, reveal, goTo, onEdited, onMissingPart, onExportPdf }: Props) {
+export function NotePane({ path, autosave, showPages, showCode = false, onHidePages, onMistakes, reveal, goTo, onEdited, onMissingPart, onExportPdf }: Props) {
   const [problems, setProblems] = useState<api.Problem[]>([]);
   const [state, setState] = useState<State>({ status: "loading" });
   // The text as typed so far, for the pages (the editor itself keeps its own copy).
@@ -271,6 +273,7 @@ export function NotePane({ path, autosave, showPages, showCode = false, onMistak
               scrollerRef={setPagesScroller}
               syncing={syncing}
               onSyncing={changeSyncing}
+              onClose={onHidePages}
             /> : <NoPages />}
         </div>
       )}
