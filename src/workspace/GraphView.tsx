@@ -16,11 +16,15 @@ type Props = {
 
 const notesIn = (entries: FileEntry[]): string[] =>
   entries.flatMap((entry) => (entry.kind === "folder" ? notesIn(entry.children) : noteFormat(entry.path) || entry.path.endsWith(".canvas") ? [entry.path] : []));
+const pdfsIn = (entries: FileEntry[]): string[] =>
+  entries.flatMap((entry) => (entry.kind === "folder" ? pdfsIn(entry.children) : entry.path.toLowerCase().endsWith(".pdf") ? [entry.path] : []));
+const isPdf = (path: string) => path.toLowerCase().endsWith(".pdf");
 const nameOf = (path: string) => path.split("/").pop()!.replace(/\.[^.]+$/, "");
 
 /**
  * The graph, like Obsidian's: a dot for each note, a line for each link. Notes linked to but not
- * created yet are faded. Hovering a note brings out its links; clicking opens it. Drag to move
+ * created yet are faded. PDFs linked with notes are in it too, as squares (one nothing is linked
+ * with isn't, so a folder of papers doesn't crowd it). Hovering a note brings out its links; clicking opens it. Drag to move
  * around, scroll to zoom.
  */
 export function GraphView({ files, activePath, onOpen, version }: Props) {
@@ -51,11 +55,10 @@ export function GraphView({ files, activePath, onOpen, version }: Props) {
     };
   }, [files, version]);
 
-  const notes = useMemo(() => notesIn(files), [files]);
-  const missing = useMemo(
-    () => [...new Set(links.flatMap((link) => [link.from, link.to]))].filter((path) => !notes.includes(path)),
-    [links, notes],
-  );
+  const linked = useMemo(() => new Set(links.flatMap((link) => [link.from, link.to])), [links]);
+  /** What's there: the notes, and the PDFs linked with them. */
+  const notes = useMemo(() => [...notesIn(files), ...pdfsIn(files).filter((pdf) => linked.has(pdf))], [files, linked]);
+  const missing = useMemo(() => [...linked].filter((path) => !notes.includes(path)), [linked, notes]);
   const ids = useMemo(() => [...notes, ...missing], [notes, missing]);
   const pairs = useMemo(() => links.map((link): [string, string] => [link.from, link.to]), [links]);
   const simulationRef = useRef<GraphSimulation>(undefined);
@@ -214,12 +217,23 @@ export function GraphView({ files, activePath, onOpen, version }: Props) {
               className="cursor-pointer outline-none active:cursor-grabbing"
             >
               <title>{id}</title>
-              <circle
-                r={radius}
-                fill={!exists ? "#ffffff" : current ? "#0b6e99" : id === hovered ? "#525252" : "#a3a3a3"}
-                stroke={exists ? "none" : "#a3a3a3"}
-                strokeDasharray={exists ? undefined : "2 2"}
-              />
+              {isPdf(id) ? (
+                <rect
+                  x={-radius}
+                  y={-radius}
+                  width={radius * 2}
+                  height={radius * 2}
+                  rx={1.5}
+                  fill={current ? "#0b6e99" : id === hovered ? "#b45309" : "#d97706"}
+                />
+              ) : (
+                <circle
+                  r={radius}
+                  fill={!exists ? "#ffffff" : current ? "#0b6e99" : id === hovered ? "#525252" : "#a3a3a3"}
+                  stroke={exists ? "none" : "#a3a3a3"}
+                  strokeDasharray={exists ? undefined : "2 2"}
+                />
+              )}
               <text y={radius + 12} textAnchor="middle" fontSize={11} fill={exists ? "#525252" : "#a3a3a3"}>
                 {nameOf(id)}
               </text>

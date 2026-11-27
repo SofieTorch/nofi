@@ -7,6 +7,7 @@ import { forgetMathsPictures } from "../../src/editor/mathsPictures";
 import { forgetFonts } from "../../src/editor/fonts";
 import { forgetPictures } from "../../src/editor/images";
 import { forgetSlashCommands } from "../../src/editor/slashMenu";
+import { forgetZoteroPapers } from "../../src/editor/noteLinks";
 import { forgetTableReads } from "../../src/editor/TableGrid";
 
 let menuHandlers: ((action: api.MenuAction) => void)[] = [];
@@ -18,6 +19,7 @@ export function setUpFakeBackend() {
   vi.resetAllMocks();
   forgetMathsPictures();
   forgetSlashCommands();
+  forgetZoteroPapers();
   forgetFonts();
   forgetTableReads();
   forgetPictures();
@@ -78,6 +80,7 @@ export function setUpFakeBackend() {
   vi.mocked(api.getSidebarSizes).mockResolvedValue({ width: 256, filesShare: 0.5 });
   vi.mocked(api.saveSidebarSizes).mockResolvedValue();
   vi.mocked(api.readZoteroPdf).mockResolvedValue(new ArrayBuffer(8));
+  vi.mocked(api.zoteroPapersWithAnnotations).mockResolvedValue([]);
   vi.mocked(api.getEditorSettings).mockResolvedValue({ blockHandles: true, boardBackground: "plain" });
   vi.mocked(api.saveEditorSettings).mockResolvedValue();
   vi.mocked(api.parseProperties).mockResolvedValue([]);

@@ -264,6 +264,11 @@ async fn note_links(current: State<'_, CurrentWorkspace>) -> Result<Vec<links::N
     Ok(links::note_links(&current.path()?))
 }
 
+#[tauri::command]
+async fn zotero_papers_with_annotations(current: State<'_, CurrentWorkspace>) -> Result<Vec<String>, String> {
+    Ok(links::zotero_papers_with_annotations(&current.path()?))
+}
+
 /// Saves a pasted (or dropped) image in the workspace's `assets` folder; returns its path there.
 /// The image comes as the request's raw body, its name in the "name" header.
 #[tauri::command]
@@ -759,6 +764,7 @@ pub fn run() {
             delete_file,
             search_notes,
             note_links,
+            zotero_papers_with_annotations,
             save_asset,
             open_url,
             close_window,

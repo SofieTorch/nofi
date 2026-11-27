@@ -189,7 +189,8 @@ describe("Following a link to a part", () => {
     const paper = await screen.findByRole("textbox", { name: "Paper.typ" });
     const view = viewOf(paper);
     await vi.waitFor(() => expect(view.state.selection.main.head).toBe(text(view).indexOf("= Methods")));
-    expect(within(paper).getByRole("heading", { name: "Methods" }).closest(".cm-line")).toHaveClass("cm-flash");
+    // (Its "=" shows too once the editor has the focus, which can come a moment before or after.)
+    expect(within(paper).getByRole("heading", { name: /^=?Methods$/ }).closest(".cm-line")).toHaveClass("cm-flash");
   });
 
   it("goes to a labelled paragraph", async () => {
@@ -301,6 +302,31 @@ describe("Making a link to a part with [[", () => {
     await vi.waitFor(async () => expect(await offered()).toEqual(["Page 1", "Page 2", "Page 3"]));
     await choose("Page 2");
     expect(text(view)).toBe('#link("Papers/attention.pdf#page=2")[attention]');
+  });
+
+  it("# right after choosing a Zotero paper lists its pages too", async () => {
+    vi.mocked(api.zoteroLibrary).mockResolvedValue({
+      libraries: [
+        {
+          id: "user",
+          name: "My Library",
+          collections: [],
+          items: [{ id: "VASW2017", title: "Attention Is All You Need", authors: ["Vaswani"], year: 2017, kind: "conferencePaper", pdf: true }],
+        },
+      ],
+    });
+    const { view } = await openNote();
+
+    await userEvent.keyboard("[[[[attention is all");
+    await screen.findByRole("option", { name: /Attention Is All You Need/ });
+    await listReady();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("#");
+
+    await vi.waitFor(async () => expect(await offered()).toEqual(["Page 1", "Page 2", "Page 3"]));
+    await choose("Page 2");
+    expect(text(view)).toBe('#link("zotero:VASW2017#page=2")[Attention Is All You Need]');
+    expect(api.readZoteroPdf).toHaveBeenCalledWith("VASW2017");
   });
 
   it("# anywhere else is just a #", async () => {

@@ -65,7 +65,14 @@ beforeEach(() => {
     return path;
   });
   const moveOnDisk = (from: string, to: string) => {
-    const moved = (p: string) => (p === from || p === `${from}/` || p.startsWith(`${from}/`) ? to + p.slice(from.length) : p);
+    // (A PDF's annotations go with it, as they do on disk.)
+    const annotations = (pdf: string) => pdf.replace(/\.pdf$/, ".annotations.json");
+    const moved = (p: string) =>
+      p === from || p === `${from}/` || p.startsWith(`${from}/`)
+        ? to + p.slice(from.length)
+        : from.endsWith(".pdf") && p === annotations(from)
+          ? annotations(to)
+          : p;
     disk = disk.map(moved);
     notes = Object.fromEntries(Object.entries(notes).map(([p, t]) => [moved(p), t]));
   };
@@ -550,6 +557,96 @@ describe("Links to what moved", () => {
     await vi.waitFor(() => expect(notes["Empty/Ideas.typ"]).toBeDefined());
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(notes["Empty/Ideas.typ"]).toBe(before);
+  });
+});
+
+describe("Links in a PDF to what moved", () => {
+  // (Words in a PDF linking to notes, kept with its annotations: see tests/pdf-links.test.tsx.)
+  const ANNOTATIONS = "Papers/attention.annotations.json";
+  const linkTo = (to: string) => JSON.stringify({ pdf: "attention.pdf", annotations: [{ id: "l1", type: "link", page: 3, quote: "draft", to }] });
+  const linksIn = (file: string) => JSON.parse(notes[file]).annotations.map((a: { to: string }) => a.to);
+
+  it("a link to a moved note is changed to its new place", async () => {
+    notes[ANNOTATIONS] = linkTo("Old/draft.typ");
+    vi.mocked(api.getOpenFolders).mockResolvedValue(["Papers", "Papers/Old"]);
+    await openWorkspace();
+
+    drag(await screen.findByRole("button", { name: "draft.typ" }), row("Empty"));
+
+    await vi.waitFor(() => expect(linksIn(ANNOTATIONS)).toEqual(["../Empty/draft.typ"]));
+  });
+
+  it("a link to a renamed note follows its new name", async () => {
+    notes[ANNOTATIONS] = linkTo("Old/draft.typ");
+    vi.mocked(api.getOpenFolders).mockResolvedValue(["Papers", "Papers/Old"]);
+    await openWorkspace();
+
+    await userEvent.click(rightClick(await screen.findByRole("button", { name: "draft.typ" })).getByRole("menuitem", { name: "Rename" }));
+    await userEvent.clear(screen.getByRole("textbox", { name: "Note name" }));
+    await userEvent.keyboard("Final draft{Enter}");
+
+    await vi.waitFor(() => expect(linksIn(ANNOTATIONS)).toEqual(["Old/Final draft.typ"]));
+  });
+
+  it("a moved PDF's links still point to the same notes", async () => {
+    notes[ANNOTATIONS] = linkTo("Old/draft.typ");
+    vi.mocked(api.getOpenFolders).mockResolvedValue(["Papers"]);
+    await openWorkspace();
+
+    drag(await screen.findByRole("button", { name: "attention.pdf" }), row("Empty"));
+
+    await vi.waitFor(() => expect(linksIn("Empty/attention.annotations.json")).toEqual(["../Papers/Old/draft.typ"]));
+  });
+
+  it("links into a renamed folder are changed", async () => {
+    notes[ANNOTATIONS] = linkTo("../Ideas.typ");
+    disk.push("Notes.pdf");
+    notes["Notes.annotations.json"] = JSON.stringify({ pdf: "Notes.pdf", annotations: [{ id: "l2", type: "link", page: 1, quote: "x", to: "Papers/Old/draft.typ" }] });
+    await openWorkspace();
+
+    await userEvent.click(rightClick(row("Papers")).getByRole("menuitem", { name: "Rename" }));
+    await userEvent.clear(screen.getByRole("textbox", { name: "Folder name" }));
+    await userEvent.keyboard("Reading{Enter}");
+
+    await vi.waitFor(() => expect(linksIn("Notes.annotations.json")).toEqual(["Reading/Old/draft.typ"]));
+    // (The PDF moved with the folder, and the note it links to didn't: its link is the same.)
+    expect(linksIn("Reading/attention.annotations.json")).toEqual(["../Ideas.typ"]);
+  });
+
+  it("a link to another PDF follows it when it moves", async () => {
+    disk.push("Papers/bert.pdf");
+    notes[ANNOTATIONS] = linkTo("bert.pdf");
+    vi.mocked(api.getOpenFolders).mockResolvedValue(["Papers"]);
+    await openWorkspace();
+
+    drag(await screen.findByRole("button", { name: "bert.pdf" }), row("Empty"));
+
+    await vi.waitFor(() => expect(linksIn(ANNOTATIONS)).toEqual(["../Empty/bert.pdf"]));
+  });
+
+  it("a Zotero paper's links follow too", async () => {
+    vi.mocked(api.zoteroPapersWithAnnotations).mockResolvedValue(["ABC123"]);
+    notes[".marginalia/zotero/ABC123.annotations.json"] = JSON.stringify({
+      pdf: "zotero:ABC123",
+      annotations: [{ id: "l1", type: "link", page: 1, quote: "draft", to: "Papers/Old/draft.typ" }],
+    });
+    vi.mocked(api.getOpenFolders).mockResolvedValue(["Papers", "Papers/Old"]);
+    await openWorkspace();
+
+    drag(await screen.findByRole("button", { name: "draft.typ" }), row("Empty"));
+
+    await vi.waitFor(() => expect(linksIn(".marginalia/zotero/ABC123.annotations.json")).toEqual(["Empty/draft.typ"]));
+  });
+
+  it("a PDF without links isn't touched: no annotations file is made for it", async () => {
+    vi.mocked(api.getOpenFolders).mockResolvedValue(["Papers", "Papers/Old"]);
+    await openWorkspace();
+
+    drag(await screen.findByRole("button", { name: "draft.typ" }), row("Empty"));
+
+    await vi.waitFor(() => expect(disk).toContain("Empty/draft.typ"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(notes[ANNOTATIONS]).toBeUndefined();
   });
 });
 

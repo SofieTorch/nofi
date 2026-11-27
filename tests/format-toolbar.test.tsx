@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../src/api";
 import App from "../src/App";
-import { file, setUpFakeBackend } from "./support/fake-backend";
+import { file, folder, setUpFakeBackend } from "./support/fake-backend";
 
 vi.mock("../src/api");
 
@@ -300,6 +300,31 @@ describe("Links", () => {
     expect(text(view)).toContain('#link("https://arxiv.org")[papers]');
   });
 
+  it("a file's address in the workspace (like a PDF's passage, copied) is linked from the note's folder", async () => {
+    notes["Notes/Reading.typ"] = "Read more papers.";
+    vi.mocked(api.listFiles).mockResolvedValue([folder("Notes", [file("Notes/Reading.typ")]), folder("Papers", [file("Papers/attention.pdf")])]);
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Notes" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reading.typ" }));
+    const view = EditorView.findFromDOM(await screen.findByRole("textbox", { name: "Reading.typ" }))!;
+    select(view, "papers");
+
+    await userEvent.click(await button("Link"));
+    await userEvent.type(await screen.findByRole("textbox", { name: "Link address" }), "Papers/attention.pdf#page=3&quote=The%20dominant{Enter}");
+
+    expect(text(view)).toBe('Read more #link("../Papers/attention.pdf#page=3&quote=The%20dominant")[papers].');
+  });
+
+  it("a Zotero paper's address is kept as it is", async () => {
+    const view = await openNote();
+    select(view, "papers");
+
+    await userEvent.click(await button("Link"));
+    await userEvent.type(await screen.findByRole("textbox", { name: "Link address" }), "zotero:GPT30001#page=3{Enter}");
+
+    expect(text(view)).toContain('#link("zotero:GPT30001#page=3")[papers]');
+  });
+
   it("an existing link's address can be changed or removed", async () => {
     notes["Paper.typ"] = 'See #link("https://a.org")[docs].';
     const view = await openNote();
@@ -534,6 +559,18 @@ describe("Links in Markdown notes", () => {
     await userEvent.type(await screen.findByRole("textbox", { name: "Link address" }), "shop.example{Enter}");
 
     expect(text(view)).toBe("Buy [milk](https://shop.example).");
+  });
+
+  it("a file's address in the workspace is written as Markdown writes it, spaces as %20", async () => {
+    notes["My Papers/attention.pdf"] = "";
+    vi.mocked(api.listFiles).mockResolvedValue([file("Todo.md"), folder("My Papers", [file("My Papers/attention.pdf")])]);
+    const view = await openNote("Todo.md");
+    select(view, "milk");
+
+    await userEvent.click(await button("Link"));
+    await userEvent.type(await screen.findByRole("textbox", { name: "Link address" }), "My Papers/attention.pdf#page=3{Enter}");
+
+    expect(text(view)).toBe("Buy [milk](My%20Papers/attention.pdf#page=3).");
   });
 });
 

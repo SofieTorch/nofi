@@ -188,6 +188,74 @@ describe("Typing [[", () => {
   });
 });
 
+describe("Zotero papers in [[", () => {
+  beforeEach(() => {
+    vi.mocked(api.zoteroLibrary).mockResolvedValue({
+      libraries: [
+        {
+          id: "user",
+          name: "My Library",
+          collections: [],
+          items: [
+            { id: "VASW2017", title: "Attention Is All You Need", authors: ["Vaswani", "Shazeer"], year: 2017, kind: "conferencePaper", pdf: true },
+            { id: "NOPDF", title: "Attention Without a PDF", authors: ["Someone"], year: 2020, kind: "journalArticle", pdf: false },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("typing finds the papers with a PDF by their title, after the workspace's files", async () => {
+    await openNote();
+
+    await userEvent.keyboard("[[[[attention");
+
+    await vi.waitFor(async () => expect(await offered()).toContain("Attention Is All You Need"));
+    const list = await offered();
+    expect(list.indexOf("Attention Is All You Need")).toBeGreaterThan(list.indexOf("attention.pdf"));
+    expect(list).not.toContain("Attention Without a PDF");
+  });
+
+  it("or by their authors and year, with them shown beside", async () => {
+    await openNote();
+
+    await userEvent.keyboard("[[[[vaswani 2017");
+
+    const option = await screen.findByRole("option", { name: /Attention Is All You Need/ });
+    expect(option).toHaveTextContent("Vaswani, Shazeer 2017");
+  });
+
+  it("with nothing typed, they aren't listed (a library can be large)", async () => {
+    await openNote();
+
+    await userEvent.keyboard("[[[[");
+
+    expect(await offered()).not.toContain("Attention Is All You Need");
+  });
+
+  it("choosing one links to the paper, showing its title", async () => {
+    const { view } = await openNote();
+
+    await userEvent.keyboard("[[[[attention is all");
+    await screen.findByRole("option", { name: /Attention Is All You Need/ });
+    await listReady();
+    await userEvent.keyboard("{Enter}");
+
+    expect(text(view)).toBe('#link("zotero:VASW2017")[Attention Is All You Need]');
+  });
+
+  it("in Markdown too", async () => {
+    const { view } = await openNote("Ideas.md");
+
+    await userEvent.keyboard("[[[[attention is all");
+    await screen.findByRole("option", { name: /Attention Is All You Need/ });
+    await listReady();
+    await userEvent.keyboard("{Enter}");
+
+    expect(text(view)).toBe("[Attention Is All You Need](zotero:VASW2017)");
+  });
+});
+
 describe("Leaving [[ without choosing", () => {
   it("clicking elsewhere makes a link to a new note with the name typed", async () => {
     const { view } = await openNote();

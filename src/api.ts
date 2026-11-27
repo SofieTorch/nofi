@@ -362,6 +362,14 @@ export function saveSidebarSizes(sizes: SidebarSizes): Promise<void> {
 }
 
 /** The user's Zotero library, or null if Zotero isn't on this computer. */
+/**
+ * The Zotero papers with annotations in this workspace (their ids): their annotations are kept in
+ * its hidden folder, `.marginalia/zotero/<id>.annotations.json`, so they're not in its files.
+ */
+export function zoteroPapersWithAnnotations(): Promise<string[]> {
+  return invoke("zotero_papers_with_annotations");
+}
+
 export function zoteroLibrary(): Promise<ZoteroLibrary | null> {
   return invoke("zotero_library");
 }

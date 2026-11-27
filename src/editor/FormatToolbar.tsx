@@ -22,6 +22,7 @@ import type { EditorView } from "@codemirror/view";
 import { useEffect, useState } from "react";
 import { isMac } from "../ui/platform";
 import { loadFonts } from "./fonts";
+import { addressFrom, notePath } from "./noteLinks";
 import type { Format, Range } from "./formatting";
 import {
   type BlockType,
@@ -349,6 +350,7 @@ export function FormatToolbar({ view, format, text, selection }: Props) {
         <LinkField
           current={options.link}
           onSave={(address) => set("link", address)}
+          inWorkspace={(typed) => addressFrom(view.state.facet(notePath), typed, format)}
           onRemove={() => set("link", null)}
           onCancel={() => {
             setPanel(null);
@@ -471,17 +473,21 @@ function Palette({
 function LinkField({
   current,
   onSave,
+  inWorkspace,
   onRemove,
   onCancel,
 }: {
   current?: string;
   onSave: (address: string) => void;
+  /** A workspace file's address (like a PDF's passage, copied) as written from the note; null if it isn't one. */
+  inWorkspace: (typed: string) => string | null;
   onRemove: () => void;
   onCancel: () => void;
 }) {
   const [address, setAddress] = useState(current ?? "");
-  // "typst.app" means "https://typst.app"; other kinds of address (mailto:…) are kept as typed.
-  const complete = (typed: string) => (/^[a-z][a-z0-9+.-]*:/i.test(typed) ? typed : `https://${typed}`);
+  // A file in the workspace is linked from the note's folder; "typst.app" means "https://typst.app";
+  // other kinds of address (mailto:…, zotero:…) are kept as typed.
+  const complete = (typed: string) => inWorkspace(typed) ?? (/^[a-z][a-z0-9+.-]*:/i.test(typed) ? typed : `https://${typed}`);
   return (
     <div className="cm-format-panel cm-link-panel">
       <input

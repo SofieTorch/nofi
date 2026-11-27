@@ -170,3 +170,108 @@ mod finding_links_between_notes {
         assert_eq!(links(&workspace), vec![("Summary.typ".to_string(), "Lecture.typ".to_string())]);
     }
 }
+
+/// PDFs are in the graph like notes: notes link to them (or name one as their `source`), and a
+/// PDF links to notes from its own words, with links kept in its annotations file beside it
+/// (`{"type": "link", "to": "…"}`, the note's path from the PDF's folder).
+mod pdfs_in_the_graph {
+    use super::*;
+
+    #[test]
+    fn a_note_linking_to_a_pdf_in_the_workspace_links_to_it() {
+        let workspace = workspace_with(&[
+            ("Ideas.typ", "See #link(\"Papers/attention.pdf#page=3\")[the paper]."),
+            ("Papers/attention notes.typ", "#metadata((\n  source: \"attention.pdf\",\n)) <properties>"),
+            ("Papers/attention.pdf", ""),
+        ]);
+
+        assert_eq!(
+            links(&workspace),
+            vec![pair("Ideas.typ", "Papers/attention.pdf"), pair("Papers/attention notes.typ", "Papers/attention.pdf")]
+        );
+    }
+
+    #[test]
+    fn a_pdfs_links_to_notes_are_links_from_the_pdf() {
+        let workspace = workspace_with(&[
+            ("Papers/attention.pdf", ""),
+            (
+                "Papers/attention.annotations.json",
+                r#"{"pdf": "attention.pdf", "annotations": [
+                    {"id": "a", "type": "link", "page": 3, "quote": "batch inference", "to": "batch inference.typ"},
+                    {"id": "b", "type": "link", "page": 4, "quote": "throughput", "to": "../Ideas.md"},
+                    {"id": "c", "type": "highlight", "page": 1, "colour": "yellow", "quote": "Attention"}
+                ]}"#,
+            ),
+            ("Papers/batch inference.typ", ""),
+            ("Ideas.md", ""),
+        ]);
+
+        assert_eq!(
+            links(&workspace),
+            vec![pair("Papers/attention.pdf", "Ideas.md"), pair("Papers/attention.pdf", "Papers/batch inference.typ")]
+        );
+    }
+
+    #[test]
+    fn a_pdfs_link_to_a_note_not_created_yet_counts_too() {
+        let workspace = workspace_with(&[
+            ("attention.pdf", ""),
+            ("attention.annotations.json", r#"{"annotations": [{"id": "a", "type": "link", "page": 1, "quote": "x", "to": "Later.typ"}]}"#),
+        ]);
+
+        assert_eq!(links(&workspace), vec![pair("attention.pdf", "Later.typ")]);
+    }
+
+    #[test]
+    fn a_pdf_linking_to_another_pdf_in_the_workspace_links_to_it() {
+        let workspace = workspace_with(&[
+            ("Papers/attention.pdf", ""),
+            ("Papers/bert.pdf", ""),
+            (
+                "Papers/attention.annotations.json",
+                r#"{"annotations": [
+                    {"id": "a", "type": "link", "page": 9, "quote": "[12]", "to": "bert.pdf"},
+                    {"id": "b", "type": "link", "page": 9, "quote": "[13]", "to": "missing.pdf"},
+                    {"id": "c", "type": "link", "page": 9, "quote": "[14]", "to": "zotero:ABC123"}
+                ]}"#,
+            ),
+        ]);
+
+        assert_eq!(links(&workspace), vec![pair("Papers/attention.pdf", "Papers/bert.pdf")]);
+    }
+
+    #[test]
+    fn an_unreadable_annotations_file_has_no_links() {
+        let workspace = workspace_with(&[("attention.pdf", ""), ("attention.annotations.json", "not json")]);
+
+        assert!(links(&workspace).is_empty());
+    }
+}
+
+/// Zotero papers' annotations are kept in the workspace's hidden folder (not in its files), so
+/// their links can be found to change when notes move.
+mod zotero_papers_with_annotations {
+    use super::*;
+
+    #[test]
+    fn lists_the_papers_whose_annotations_are_kept_here() {
+        let workspace = workspace_with(&[
+            (".marginalia/zotero/ABC123.annotations.json", "{}"),
+            (".marginalia/zotero/1_XYZ.annotations.json", "{}"),
+            (".marginalia/zotero/notes.txt", ""),
+        ]);
+
+        let mut found = marginalia_lib::links::zotero_papers_with_annotations(workspace.path());
+        found.sort();
+
+        assert_eq!(found, vec!["1_XYZ".to_string(), "ABC123".to_string()]);
+    }
+
+    #[test]
+    fn none_when_there_are_none() {
+        let workspace = workspace_with(&[]);
+
+        assert!(marginalia_lib::links::zotero_papers_with_annotations(workspace.path()).is_empty());
+    }
+}

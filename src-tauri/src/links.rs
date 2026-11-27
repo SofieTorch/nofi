@@ -3,6 +3,11 @@
 //! in Markdown (spaces written as %20). A note's `source` property (the file it's about, like a
 //! PDF its notes are on) is a link too. A board (`.canvas`) links to the notes on it, and to those
 //! its text cards link to.
+//!
+//! PDFs are in the graph like notes: a note links to a PDF in the workspace (a link to it, or its
+//! `source` property naming it), and a PDF links to notes from words on its pages, its links kept
+//! with its annotations (`{"type": "link", "to": "…"}`, the note's path from the PDF's folder);
+//! a PDF links to other PDFs in the workspace the same way.
 
 use crate::files::{list_files, EntryKind, FileEntry};
 use serde::Serialize;
@@ -18,9 +23,19 @@ pub struct NoteLink {
 }
 
 pub fn note_links(workspace: &Path) -> Vec<NoteLink> {
+    let files = list_files(workspace).unwrap_or_default();
     let mut notes = vec![];
-    collect_notes(&list_files(workspace).unwrap_or_default(), &mut notes);
+    collect_notes(&files, &mut notes);
+    let mut pdfs = vec![];
+    collect_pdfs(&files, &mut pdfs);
     let mut found = BTreeSet::new();
+    for pdf in &pdfs {
+        for target in pdf_links(workspace, pdf, &pdfs) {
+            if &target != pdf {
+                found.insert((pdf.clone(), target));
+            }
+        }
+    }
     for note in notes {
         let Ok(text) = fs::read_to_string(workspace.join(&note)) else { continue };
         if note.ends_with(".canvas") {
@@ -31,7 +46,10 @@ pub fn note_links(workspace: &Path) -> Vec<NoteLink> {
         }
         let markdown = note.ends_with(".md");
         for address in links_in(&text, markdown) {
-            if let Some(target) = resolve(&note, &address, markdown) {
+            // (To a note, or to a PDF that's in the workspace.)
+            let target = resolve(&note, &address, markdown)
+                .or_else(|| resolve_file(&note, &address, markdown).filter(|file| pdfs.contains(file)));
+            if let Some(target) = target {
                 if target != note {
                     found.insert((note.clone(), target));
                 }
@@ -61,6 +79,42 @@ fn board_links(board: &str, text: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// The Zotero papers (their ids) whose annotations are kept in the workspace's hidden folder,
+/// `.marginalia/zotero/<id>.annotations.json`.
+pub fn zotero_papers_with_annotations(workspace: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(workspace.join(".marginalia/zotero")) else { return vec![] };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.strip_suffix(crate::files::ANNOTATIONS_SUFFIX).map(str::to_string))
+        .collect()
+}
+
+/// A PDF's links: the notes words on its pages link to, and the PDFs in the workspace (`pdfs`), from
+/// its annotations file beside it.
+fn pdf_links(workspace: &Path, pdf: &str, pdfs: &[String]) -> Vec<String> {
+    let Some(file) = crate::files::annotations_of(pdf) else { return vec![] };
+    let Ok(text) = fs::read_to_string(workspace.join(file)) else { return vec![] };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { return vec![] };
+    json["annotations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| a["type"].as_str() == Some("link"))
+        .filter_map(|a| a["to"].as_str())
+        .filter_map(|to| resolve(pdf, to, false).or_else(|| resolve_file(pdf, to, false).filter(|file| pdfs.contains(file))))
+        .collect()
+}
+
+fn collect_pdfs(entries: &[FileEntry], pdfs: &mut Vec<String>) {
+    for entry in entries {
+        match entry.kind {
+            EntryKind::Folder => collect_pdfs(&entry.children, pdfs),
+            EntryKind::File if entry.path.to_lowercase().ends_with(".pdf") => pdfs.push(entry.path.clone()),
+            EntryKind::File => {}
+        }
+    }
 }
 
 fn collect_notes(entries: &[FileEntry], notes: &mut Vec<String>) {

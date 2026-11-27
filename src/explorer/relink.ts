@@ -3,10 +3,13 @@
 // After files or folders move (dragged, or a folder renamed), links to them in every note point
 // to their new place, and a moved note's own links still point to the same files. A copied note's
 // links are made to work from where the copy is. Links, images and a note's `source` property are
-// changed; websites, Zotero papers, places in the same note and anything in code aren't.
+// changed; websites, Zotero papers, places in the same note and anything in code aren't. A PDF's
+// links to notes (kept with its annotations) are changed the same way.
 
 import { findFormatting, type Format, noteFormat } from "../editor/formatting";
 import { editNote, relativePath, resolvePath } from "../editor/noteLinks";
+import type { FileEntry } from "../api";
+import { relinkPageLinks } from "../pdf/annotations";
 
 /** A file or folder that moved, or was copied: where it was, and where it is now (or the copy). */
 export type Moved = { from: string; to: string };
@@ -89,5 +92,24 @@ export async function relink(notes: string[], moves: Moved[], copies: Moved[] = 
       }
       return edits;
     }).catch(() => {});
+  }
+}
+
+/** The PDFs among files (in folders too). */
+export const pdfsIn = (entries: FileEntry[]): string[] =>
+  entries.flatMap((entry) => (entry.kind === "folder" ? pdfsIn(entry.children) : entry.path.toLowerCase().endsWith(".pdf") ? [entry.path] : []));
+
+/**
+ * Changes PDFs' links to notes (`pdfs`: every PDF's path now, Zotero papers' too) after files moved
+ * (`moves`), or were copied (`copies`): like notes' links, see `relink`.
+ */
+export async function relinkPdfs(pdfs: string[], moves: Moved[], copies: Moved[] = []) {
+  const back = moves.map(({ from, to }) => ({ from: to, to: from }));
+  const copiedBack = copies.map(({ from, to }) => ({ from: to, to: from }));
+  for (const pdf of pdfs) {
+    const copyOf = moved(pdf, copiedBack);
+    const was = copyOf ?? moved(pdf, back) ?? pdf;
+    const targets = copyOf ? copies : moves;
+    await relinkPageLinks(pdf, was, (path) => moved(path, targets)).catch(() => {});
   }
 }

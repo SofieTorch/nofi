@@ -1,6 +1,7 @@
 // Naming a Zotero paper's source note, the first time a note is added on the paper (see
 // tests/zotero-notes.test.tsx). The name is a path from the top of the workspace, without `.typ`:
-// folders in it are made if they're missing.
+// folders in it are made if they're missing. A name that's a note already isn't written into
+// straight away: that note can be used as the paper's note instead.
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -25,16 +26,21 @@ export function NoteNameDialog({
   suggested,
   taken,
   onCreate,
+  onUse,
   onCancel,
 }: {
   suggested: string;
   /** Whether a note is already at a path. */
   taken: (path: string) => Promise<boolean>;
   onCreate: (path: string) => void;
+  /** Uses the note that's at a path as the paper's note. */
+  onUse: (path: string) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(suggested);
   const [problem, setProblem] = useState<string>();
+  /** The note that's there at the name typed (offered to use instead). */
+  const [existing, setExisting] = useState<string>();
   const field = useRef<HTMLInputElement>(null);
   const path = notePathFor(name);
 
@@ -45,7 +51,10 @@ export function NoteNameDialog({
 
   async function create() {
     if (!path) return;
-    if (await taken(path)) return setProblem(`There's already a note called “${path.replace(/\.typ$/, "")}”.`);
+    if (await taken(path)) {
+      setExisting(path);
+      return setProblem(`There's already a note called “${path.replace(/\.typ$/, "")}”.`);
+    }
     onCreate(path);
   }
 
@@ -71,6 +80,7 @@ export function NoteNameDialog({
           onChange={(event) => {
             setName(event.target.value);
             setProblem(undefined);
+            setExisting(undefined);
           }}
           className="mt-1 w-full rounded-md px-2 py-1 ring-1 ring-neutral-300 outline-none focus:ring-neutral-500"
         />
@@ -81,9 +91,15 @@ export function NoteNameDialog({
           <button type="button" onClick={onCancel} className="rounded-md px-3 py-1 text-neutral-600 hover:bg-neutral-100">
             Cancel
           </button>
-          <button type="submit" disabled={!path} className="rounded-md bg-neutral-800 px-3 py-1 text-white disabled:opacity-40">
-            Create
-          </button>
+          {existing ? (
+            <button type="button" onClick={() => onUse(existing)} className="rounded-md bg-neutral-800 px-3 py-1 text-white">
+              Use it as the paper's note
+            </button>
+          ) : (
+            <button type="submit" disabled={!path} className="rounded-md bg-neutral-800 px-3 py-1 text-white disabled:opacity-40">
+              Create
+            </button>
+          )}
         </div>
       </form>
     </div>,

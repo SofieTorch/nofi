@@ -3,8 +3,8 @@
 
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
-import { useEffect, useRef, useState } from "react";
+import { Decoration, EditorView, keymap } from "@codemirror/view";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as api from "../api";
 import RULE from "../editor/checklistRule.typ?raw";
 import { editorFeatures } from "../editor/features";
@@ -80,7 +80,7 @@ const Missing = ({ file }: { file: string }) => (
 );
 
 /** The part of a note a card shows: the whole note (without its properties), a heading's section, a paragraph, or some text. */
-function shownText(text: string, format: Format, part: Part) {
+export function shownText(text: string, format: Format, part: Part) {
   if (part.quote !== undefined) return { text: part.quote };
   if (part.anchor) {
     const found = findPart(text, format, part.anchor);
@@ -129,11 +129,32 @@ function NoteContent({ card, format, version, onName }: FileProps & { format: Fo
   return <NotePreview text={state.text} format={format} path={card.file} />;
 }
 
-/** A note's text shown on a card, styled as in the editor, but not editable there. */
-function NotePreview({ text, format, path }: { text: string; format: Format; path: string }) {
+/** Marks the lines of a part of a note (from, to), as what's pointed at. */
+function markedLines(from: number, to: number) {
+  return [
+    EditorView.decorations.of((view) => {
+      const { doc } = view.state;
+      const lines = [];
+      for (let n = doc.lineAt(from).number; n <= doc.lineAt(Math.min(to, doc.length)).number; n++) {
+        lines.push(Decoration.line({ class: "cm-cited-line" }).range(doc.line(n).from));
+      }
+      return Decoration.set(lines);
+    }),
+    EditorView.theme({ ".cm-cited-line": { backgroundColor: "rgb(254 243 199 / 0.6)", borderRadius: "3px" } }),
+  ];
+}
+
+/**
+ * A note's text shown on a card (or in a preview), styled as in the editor, but not editable there.
+ * `marked`: a part of it (as written) that's marked, and scrolled to in what it's in. Without
+ * `margin`, its footnotes and comments aren't shown beside it (as in a small preview).
+ */
+export function NotePreview({ text, format, path, marked, margin = true }: { text: string; format: Format; path: string; marked?: string; margin?: boolean }) {
   const parent = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView>(null);
-  useEffect(() => {
+  // (Made before it's first drawn: it's never shown empty.)
+  useLayoutEffect(() => {
+    const at = marked ? text.indexOf(marked) : -1;
     view.current = new EditorView({
       parent: parent.current!,
       state: EditorState.create({
@@ -144,9 +165,33 @@ function NotePreview({ text, format, path }: { text: string; format: Format; pat
           EditorView.contentAttributes.of({ "aria-label": `Shown from ${nameOf(path)}` }),
           notePath.of(path),
           editorFeatures(format, { inCard: true, readOnly: true }),
+          at >= 0 ? markedLines(at, at + marked!.length) : [],
+          margin ? [] : EditorView.theme({ ".cm-sidenote": { display: "none" } }),
         ],
       }),
     });
+    if (at >= 0) {
+      // Scrolled to it, a little room above, once the editor is laid out. (Where it is down the
+      // note, from the editor's own measures: it only draws the lines near what's shown, so a
+      // line further down may not be drawn yet to find it there.)
+      const shown = view.current;
+      shown.requestMeasure({
+        read: () => {
+          const box = parent.current?.closest<HTMLElement>(".overflow-y-auto");
+          // (Not when there's nothing to scroll in: it isn't laid out.)
+          if (!box || !box.clientHeight) return null;
+          const editorTop = shown.dom.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+          const line = shown.lineBlockAt(at);
+          const top = editorTop + line.top - 8;
+          // (Already in view: left as it is.)
+          if (top >= box.scrollTop && editorTop + line.bottom <= box.scrollTop + box.clientHeight) return null;
+          return { box, top };
+        },
+        write: (measured) => {
+          if (measured) measured.box.scrollTop = Math.max(0, measured.top);
+        },
+      });
+    }
     return () => view.current?.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, format]);

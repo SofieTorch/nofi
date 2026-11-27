@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../src/api";
 import App from "../src/App";
 import * as pdf from "../src/workspace/pdf";
-import { file, folder, setUpFakeBackend } from "./support/fake-backend";
+import { file, folder, setUpFakeBackend, zoteroChangedOnDisk } from "./support/fake-backend";
 
 vi.mock("../src/api");
 vi.mock("../src/workspace/pdf");
@@ -557,6 +557,157 @@ describe("Links on the pages", () => {
     await userEvent.click(within(toolbar).getByRole("button", { name: "Select an area" }));
 
     expect(link).toHaveClass("pointer-events-none");
+  });
+});
+
+describe("Previewing where a link goes, like a reference", () => {
+  // A citation in a paper ("[12]") is usually a link to its reference in the bibliography: hovering
+  // it shows the reference as the paper has it, and the paper in Zotero, if it's there.
+  const REFERENCE = "[12] A. Vaswani, N. Shazeer, et al. Attention is all you need. In NeurIPS, 2017.";
+  const textAt = vi.fn(async () => REFERENCE);
+  function withCitation(link: pdf.PdfLink = { x: 60, y: 80, width: 20, height: 12, page: 3, top: 400, left: 50 }) {
+    const opened = vi.mocked(pdf.openPdf).getMockImplementation();
+    vi.mocked(pdf.openPdf).mockImplementation(async (bytes) => {
+      const document = await opened!(bytes);
+      return {
+        ...document,
+        page: async (number) => ({ ...(await document.page(number)), textAt, links: async () => (number === 1 ? [link] : []) }),
+      };
+    });
+  }
+  beforeEach(() => {
+    textAt.mockClear();
+    vi.mocked(api.zoteroLibrary).mockResolvedValue({
+      libraries: [
+        {
+          id: "user",
+          name: "My Library",
+          collections: [],
+          items: [{ id: "VASW2017", title: "Attention Is All You Need", authors: ["Vaswani", "Shazeer"], year: 2017, kind: "conferencePaper", pdf: true }],
+        },
+      ],
+    });
+  });
+
+  it("hovering a link to a place in the PDF shows the text there: the reference", async () => {
+    withCitation();
+    await openPdf();
+
+    await userEvent.hover(await screen.findByRole("link", { name: "Page 3" }));
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(REFERENCE);
+    expect(textAt).toHaveBeenCalledWith(400, 50);
+  });
+
+  it("a link to a figure shows the figure: its part of the page, drawn, down to its caption", async () => {
+    const region = { x: 40, y: 380, width: 260, height: 200 };
+    const figureAt = vi.fn(async () => region);
+    const drawPart = vi.fn(async () => {});
+    const opened = vi.mocked(pdf.openPdf).getMockImplementation();
+    vi.mocked(pdf.openPdf).mockImplementation(async (bytes) => {
+      const document = await opened!(bytes);
+      const link = { x: 60, y: 80, width: 40, height: 12, page: 3, top: 400, left: 50, figure: { name: "Figure 1" } };
+      return { ...document, page: async (number) => ({ ...(await document.page(number)), textAt, figureAt, drawPart, links: async () => (number === 1 ? [link] : []) }) };
+    });
+    await openPdf();
+
+    await userEvent.hover(await screen.findByRole("link", { name: "Page 3" }));
+
+    const preview = await screen.findByRole("tooltip");
+    expect(within(preview).getByRole("img", { name: "Figure on page 3" })).toBeInTheDocument();
+    expect(figureAt).toHaveBeenCalledWith(400, 50, "Figure 1");
+    await vi.waitFor(() => expect(drawPart).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), region, expect.any(Number)));
+    expect(textAt).not.toHaveBeenCalled();
+  });
+
+  it("a reference to a paper in Zotero shows it, and Open opens it beside", async () => {
+    withCitation();
+    await openPdf();
+    await userEvent.hover(await screen.findByRole("link", { name: "Page 3" }));
+
+    const preview = await screen.findByRole("tooltip");
+    await within(preview).findByText("In your Zotero library");
+    expect(preview).toHaveTextContent("Attention Is All You Need");
+    expect(preview).toHaveTextContent("Vaswani, Shazeer · 2017");
+    await userEvent.click(within(preview).getByRole("button", { name: "Open" }));
+
+    await vi.waitFor(() => expect(api.readZoteroPdf).toHaveBeenCalledWith("VASW2017"));
+  });
+
+  it("a paper added to Zotero while the PDF is open is found, without opening it again", async () => {
+    const zotero = await vi.mocked(api.zoteroLibrary)();
+    vi.mocked(api.zoteroLibrary).mockResolvedValue({ libraries: [{ ...zotero!.libraries[0], items: [] }] });
+    withCitation();
+    await openPdf();
+    const link = await screen.findByRole("link", { name: "Page 3" });
+    await userEvent.hover(link);
+    await screen.findByRole("tooltip");
+    await userEvent.unhover(link);
+    await vi.waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+
+    vi.mocked(api.zoteroLibrary).mockResolvedValue(zotero);
+    await zoteroChangedOnDisk();
+    await userEvent.hover(link);
+
+    expect(await within(await screen.findByRole("tooltip")).findByText("In your Zotero library")).toBeInTheDocument();
+  });
+
+  it("a reference to a paper that isn't in Zotero shows only the reference", async () => {
+    vi.mocked(api.zoteroLibrary).mockResolvedValue(null);
+    withCitation();
+    await openPdf();
+
+    await userEvent.hover(await screen.findByRole("link", { name: "Page 3" }));
+
+    const preview = await screen.findByRole("tooltip");
+    expect(preview).toHaveTextContent(REFERENCE);
+    expect(within(preview).queryByText("In your Zotero library")).not.toBeInTheDocument();
+  });
+
+  it("stays while the mouse is over it, and goes once it leaves", async () => {
+    withCitation();
+    await openPdf();
+    const link = await screen.findByRole("link", { name: "Page 3" });
+    await userEvent.hover(link);
+    const preview = await screen.findByRole("tooltip");
+
+    await userEvent.unhover(link);
+    await userEvent.hover(preview);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+
+    await userEvent.unhover(preview);
+    await vi.waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
+  });
+
+  it("stays inside the reader: moved left when it would go past its right edge, above the link when past its bottom", async () => {
+    withCitation();
+    await openPdf();
+    const link = await screen.findByRole("link", { name: "Page 3" });
+    // (The reader shows 600 × 800; the preview would be at 500–820 across, 760–860 down.)
+    const layout = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      if (this.hasAttribute("data-pdf-scroller")) return { left: 0, right: 600, top: 0, bottom: 800, width: 600, height: 800 } as DOMRect;
+      if (this.getAttribute("role") === "tooltip") return { left: 500, right: 820, top: 760, bottom: 860, width: 320, height: 100 } as DOMRect;
+      return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
+    });
+
+    await userEvent.hover(link);
+
+    const preview = await screen.findByRole("tooltip");
+    // (Above the link: back by its own height, the link's as drawn, and the gaps.)
+    const above = 100 + Number.parseFloat(link.style.height) + 8;
+    await vi.waitFor(() => expect(preview.style.transform).toBe(`translate(-228px, -${Math.round(above)}px)`));
+    layout.mockRestore();
+  });
+
+  it("links to websites have no preview", async () => {
+    withCitation({ x: 60, y: 80, width: 100, height: 20, url: "https://arxiv.org" });
+    await openPdf();
+
+    await userEvent.hover(await screen.findByRole("link", { name: "https://arxiv.org" }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 });
 

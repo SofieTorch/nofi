@@ -98,11 +98,25 @@ async function select(page: HTMLElement, text: string) {
 }
 
 const bar = () => screen.findByRole("toolbar", { name: "Selected text" });
+
+/**
+ * Adds a note on the text selected: it's highlighted, then its highlight's bar has Add note (the
+ * bar for selected text copies it as a footnote, link or quote instead).
+ */
+async function addNoteOnSelection() {
+  await userEvent.click(within(await bar()).getByRole("button", { name: "Highlight in yellow" }));
+  const page = screen.getByRole("img", { name: "Page 3" });
+  await vi.waitFor(() => expect(page.querySelector("[data-highlight]")).not.toBeNull());
+  // (The highlight is at 10–210 across, 40–54 down.)
+  fireEvent.mouseUp(page, { clientX: 50, clientY: 45 });
+  fireEvent.click(page, { clientX: 50, clientY: 45 });
+  await userEvent.click(within(await screen.findByRole("toolbar", { name: "Annotation" })).getByRole("button", { name: "Add note" }));
+}
 const nameDialog = () => screen.findByRole("dialog", { name: "Name the paper's note" });
 
 async function addNoteOn(text: string) {
   await select(await openPaper(), text);
-  await userEvent.click(within(await bar()).getByRole("button", { name: "Add note" }));
+  await addNoteOnSelection();
 }
 
 describe("Highlighting a Zotero paper", () => {
@@ -172,7 +186,7 @@ describe("The first note on a Zotero paper", () => {
     await vi.waitFor(() => expect(notes["Papers/LLMs/gpt3.typ"]).toContain(`#link("zotero:GPT30001#page=3`));
   });
 
-  it("a name that's taken is refused, so nothing is written into that note", async () => {
+  it("a name that's a note already isn't written into straight away: it offers to use that note", async () => {
     notes["gpt3.typ"] = "My own note.";
     await addNoteOn("Few-shot learning");
     const dialog = await nameDialog();
@@ -181,7 +195,41 @@ describe("The first note on a Zotero paper", () => {
     await userEvent.type(name, "gpt3{Enter}");
 
     expect(await within(dialog).findByText("There's already a note called “gpt3”.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Use it as the paper's note" })).toBeInTheDocument();
     expect(notes["gpt3.typ"]).toBe("My own note.");
+  });
+
+  it("using it makes it the paper's note, its text kept, and the note on the passage goes in it", async () => {
+    notes["gpt3.typ"] = "My own note.";
+    await addNoteOn("Few-shot learning");
+    const dialog = await nameDialog();
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    await userEvent.clear(name);
+    await userEvent.type(name, "gpt3{Enter}");
+
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Use it as the paper's note" }));
+
+    await vi.waitFor(() => expect(notes["gpt3.typ"]).toContain("#footnote["));
+    const note = notes["gpt3.typ"];
+    expect(note).toContain("source: zotero:GPT30001");
+    expect(note).toContain("title: Language Models are Few-Shot Learners");
+    expect(note).toContain("My own note.");
+    expect(await screen.findByRole("textbox", { name: "gpt3.typ" })).toBeInTheDocument();
+  });
+
+  it("typing something else goes back to making a new note", async () => {
+    notes["gpt3.typ"] = "My own note.";
+    await addNoteOn("Few-shot learning");
+    const dialog = await nameDialog();
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    await userEvent.clear(name);
+    await userEvent.type(name, "gpt3{Enter}");
+    await within(dialog).findByRole("button", { name: "Use it as the paper's note" });
+
+    await userEvent.type(name, " new");
+
+    expect(within(dialog).queryByRole("button", { name: "Use it as the paper's note" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeEnabled();
   });
 
   it("an empty name or one going up a folder is refused", async () => {
@@ -196,14 +244,96 @@ describe("The first note on a Zotero paper", () => {
     expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
   });
 
-  it("Cancel adds nothing, not even the highlight", async () => {
+  it("Cancel adds no note (the highlight stays)", async () => {
     await addNoteOn("Few-shot learning");
 
     await userEvent.click(within(await nameDialog()).getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("dialog", { name: "Name the paper's note" })).not.toBeInTheDocument();
-    expect(notes[ANNOTATIONS]).toBeUndefined();
+    expect(JSON.parse(notes[ANNOTATIONS]).annotations).toHaveLength(1);
     expect(api.createNoteAt).not.toHaveBeenCalled();
+  });
+});
+
+describe("A Zotero paper's note, from the toolbar", () => {
+  it("with none yet, asks for its name, then makes it with Zotero's details and opens it", async () => {
+    await openPaper();
+    await userEvent.click(within(await screen.findByRole("toolbar", { name: "PDF" })).getByRole("button", { name: "Open the paper's note" }));
+
+    await userEvent.click(within(await nameDialog()).getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByRole("textbox", { name: NOTE })).toBeInTheDocument();
+    expect(notes[NOTE]).toContain("source: zotero:GPT30001");
+    expect(notes[NOTE]).not.toContain("#footnote");
+    expect(notes[ANNOTATIONS]).toBeUndefined();
+  });
+});
+
+describe("Using a note that's there as a Zotero paper's note", () => {
+  // (Like a note that was the paper's note until its properties were taken out.)
+  async function useNote(name: string) {
+    await openPaper();
+    await userEvent.click(within(await screen.findByRole("toolbar", { name: "PDF" })).getByRole("button", { name: "Open the paper's note" }));
+    const dialog = await nameDialog();
+    const field = within(dialog).getByRole("textbox", { name: "Name" });
+    await userEvent.clear(field);
+    await userEvent.type(field, `${name}{Enter}`);
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Use it as the paper's note" }));
+  }
+
+  it("from the toolbar, it's made the paper's note and opens, nothing else written in it", async () => {
+    notes["masters/thesis/gpt3.typ"] = "What I wrote.";
+
+    await useNote("masters/thesis/gpt3");
+
+    expect(await screen.findByRole("textbox", { name: "gpt3.typ" })).toBeInTheDocument();
+    const note = notes["masters/thesis/gpt3.typ"];
+    expect(note).toMatch(/^#metadata\(\(\n/);
+    expect(note).toContain("source: zotero:GPT30001");
+    expect(note).toContain("authors: [Brown, Mann, Ryder]");
+    expect(note).toContain("year: 2020");
+    expect(note).toMatch(/<properties>\n\nWhat I wrote\.$/);
+    expect(note).not.toContain("#footnote");
+  });
+
+  it("properties it has are kept: only what's missing is added", async () => {
+    notes["gpt3.typ"] = "#metadata((\ntitle: My own title\nyear: 2021\n)) <properties>\n\nWhat I wrote.";
+
+    await useNote("gpt3");
+
+    await vi.waitFor(() => expect(notes["gpt3.typ"]).toContain("source: zotero:GPT30001"));
+    const note = notes["gpt3.typ"];
+    expect(note).toContain("title: My own title");
+    expect(note).toContain("year: 2021");
+    expect(note).not.toContain("Language Models are Few-Shot Learners");
+    expect(note).toContain("authors: [Brown, Mann, Ryder]");
+    expect(note).toContain("What I wrote.");
+  });
+
+  it("afterwards it's the note the toolbar's button opens", async () => {
+    notes["gpt3.typ"] = "What I wrote.";
+    await useNote("gpt3");
+    await screen.findByRole("textbox", { name: "gpt3.typ" });
+    vi.mocked(api.createNoteAt).mockClear();
+
+    await userEvent.click(within(screen.getAllByRole("toolbar", { name: "PDF" })[0]).getByRole("button", { name: "Open the paper's note" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog", { name: "Name the paper's note" })).not.toBeInTheDocument());
+    expect(api.createNoteAt).not.toHaveBeenCalled();
+  });
+});
+
+describe("Copying a Zotero paper's passage to cite it", () => {
+  it("is cited by its authors and year, copied straight away in the click", async () => {
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => void copied.push(text) } });
+    await select(await openPaper(), "Few-shot learning");
+    await userEvent.click(within(await bar()).getByRole("button", { name: "Copy as" }));
+    const footnote = within(await screen.findByRole("menu", { name: "Copy as" })).getByRole("menuitem", { name: "Footnote" });
+
+    fireEvent.click(footnote);
+
+    expect(copied).toEqual([`#footnote[#link("zotero:GPT30001#page=3&quote=Few-shot%20learning")[Brown et al., 2020, p. 3]]`]);
   });
 });
 

@@ -98,6 +98,8 @@ export type Part = {
   anchor?: string;
   page?: number;
   quote?: string;
+  /** Which time the quote's words are on the page (from 1), when it's not the first. */
+  nth?: number;
   area?: { x: number; y: number; width: number; height: number };
   /** A spot on a page (a PDF note's), in the page's points from its top left. */
   point?: { x: number; y: number };
@@ -118,6 +120,7 @@ export function readPart(subpath = ""): Part {
         part.quote = value;
       }
     }
+    if (key === "nth" && /^\d+$/.test(value) && Number(value) > 1) part.nth = Number(value);
     if (key === "area") {
       const [x, y, width, height] = value.split(",").map(Number);
       if ([x, y, width, height].every(Number.isFinite)) part.area = { x, y, width, height };
@@ -135,6 +138,7 @@ export function writePart(part: Part): string {
   const pieces = [];
   if (part.page) pieces.push(`page=${part.page}`);
   if (part.quote !== undefined) pieces.push(`quote=${encodeURIComponent(part.quote)}`);
+  if (part.quote !== undefined && part.nth && part.nth > 1) pieces.push(`nth=${part.nth}`);
   if (part.area) pieces.push(`area=${[part.area.x, part.area.y, part.area.width, part.area.height].map((n) => Math.round(n)).join(",")}`);
   if (part.point) pieces.push(`point=${[part.point.x, part.point.y].map((n) => Math.round(n)).join(",")}`);
   return pieces.length ? `#${pieces.join("&")}` : "";

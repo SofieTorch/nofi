@@ -9,7 +9,7 @@ import { createAutosave } from "../editor/autosave";
 import { forgetNoteHistory, moveNoteHistory } from "../editor/noteHistory";
 import { NotePane } from "../editor/NotePane";
 import { showBlockHandles } from "../editor/blockHandles";
-import { type LinkTarget, setLinkCopiedReporter, setNoteLinkOpener, setWorkspaceNotes } from "../editor/noteLinks";
+import { forgetZoteroPapers, type LinkTarget, setLinkCopiedReporter, setNoteLinkOpener, setWorkspaceNotes } from "../editor/noteLinks";
 import { noteFormat } from "../editor/formatting";
 import { setImageProblemReporter } from "../editor/images";
 import { type Command, CommandPalette } from "./CommandPalette";
@@ -17,7 +17,7 @@ import { ConfirmDelete } from "./ConfirmDelete";
 import { SettingsDialog } from "./SettingsDialog";
 import { FileExplorer, type Section } from "../explorer/FileExplorer";
 import { findPaper, zoteroPath } from "../explorer/Library";
-import { type Moved, relink } from "../explorer/relink";
+import { type Moved, pdfsIn, relink, relinkPdfs } from "../explorer/relink";
 import { isMac } from "../ui/platform";
 import type { FindAt } from "./PdfView";
 import type { Match } from "../explorer/searchWorkspace";
@@ -27,7 +27,7 @@ import { FileHistory } from "./fileHistory";
 import { GraphView } from "./GraphView";
 import { activeFile, activePath, closeGroup, closeTab, emptyLayout, findTab, groups, keepTab, placeTab, tabFor, type Layout, openTab, removePath, renamePath, split } from "./layout";
 import { Panes } from "./Panes";
-import { PdfView } from "./PdfView";
+import { PdfView, UNDO_IN_READER } from "./PdfView";
 import { BoardView } from "../board/BoardView";
 
 const SAVE_PROBLEM = "Couldn't save the note:";
@@ -211,6 +211,13 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
     filesRef.current = files ?? [];
     setWorkspaceNotes(files ?? []);
   }, [files]);
+  // (Zotero's papers, for the [[ list, are read again once Zotero changes.)
+  useEffect(() => {
+    const unlisten = api.onZoteroChanged(forgetZoteroPapers);
+    return () => {
+      unlisten.then((stop) => stop(), () => {});
+    };
+  }, []);
   useEffect(() => {
     setNoteLinkOpener(followLink);
     setLinkCopiedReporter(setNotice);
@@ -304,6 +311,9 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       if (before !== note) moveNoteHistory(before, note);
     }
     await relink(notesIn(listed), moves);
+    await relinkPdfs(await pdfsWithLinks(listed), moves);
+    // (Open PDFs read their links again.)
+    setSaves((count) => count + 1);
     setPanes((current) => {
       let next = current;
       for (const group of groups(current)) {
@@ -317,6 +327,12 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       for (const folder of now) open.add(folder);
     });
     setSelected((current) => (current === null ? null : after(current)));
+  }
+
+  /** Every PDF that may have links: the workspace's, and Zotero papers with annotations here. */
+  async function pdfsWithLinks(listed: FileEntry[]) {
+    const papers = await api.zoteroPapersWithAnnotations().catch(() => [] as string[]);
+    return [...pdfsIn(listed), ...papers.map((id) => `zotero:${id}`)];
   }
 
   async function renameFolder(path: string, newName: string) {
@@ -336,6 +352,7 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       if (copy) {
         const listed = await loadFiles();
         await relink(notesIn(listed), [], [{ from: path, to: newPath }]);
+        await relinkPdfs(await pdfsWithLinks(listed), [], [{ from: path, to: newPath }]);
       } else if (newPath !== path) {
         await followMoves([{ from: path, to: newPath }]);
       }
@@ -437,9 +454,10 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
 
   /** A note chosen in the graph opens beside it, in another pane if there's one, so the graph stays. */
   async function openFromGraph(path: string, graphPane: string) {
-    if (!(await ensureNote(path))) return;
+    // (A note not created yet is made; a PDF opens in the reader.)
+    const tab = { ...tabFor(path), preview: true };
+    if (tab.kind === "note" && !(await ensureNote(path))) return;
     setPanes((current) => {
-      const tab = { kind: "note", path, preview: true } as const;
       if (findTab(current, tab)) return openTab(current, tab);
       const other = groups(current).find((group) => group.id !== graphPane);
       return other ? openTab(current, tab, other.id) : split(current, graphPane, "right", tab);
@@ -559,7 +577,14 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
       document.execCommand?.(kind);
       return;
     }
-    stepFileHistory(kind);
+    if (!readerTookIt(kind)) stepFileHistory(kind);
+  }
+
+  /** A PDF reader with the focus undoes, or redoes, its own changes to its annotations first. */
+  function readerTookIt(kind: "undo" | "redo") {
+    const focused = document.activeElement;
+    const reader = focused instanceof Element ? focused.closest("[data-pdf-reader]") : null;
+    return !!reader && !reader.dispatchEvent(new CustomEvent(UNDO_IN_READER, { detail: kind, cancelable: true }));
   }
 
   // ⌘⇧F (Ctrl+Shift+F elsewhere): search the whole workspace, in the sidebar.
@@ -587,7 +612,8 @@ export function WorkspaceScreen({ workspace }: { workspace: Workspace }) {
         return;
       }
       event.preventDefault();
-      stepFileHistory(isRedo ? "redo" : "undo");
+      const kind = isRedo ? "redo" : "undo";
+      if (!readerTookIt(kind)) stepFileHistory(kind);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -158,6 +158,50 @@ describe("The graph view", () => {
     expect(screen.queryByRole("textbox", { name: "Ideas.md" })).not.toBeInTheDocument();
   });
 
+  describe("PDFs", () => {
+    beforeEach(() => {
+      vi.mocked(api.listFiles).mockImplementation(async () => [...Object.keys(notes), "attention.pdf", "unread.pdf"].map(file));
+      vi.mocked(api.noteLinks).mockResolvedValue([
+        { from: "attention.pdf", to: "Ideas.md" },
+        { from: "Paper.typ", to: "attention.pdf" },
+      ]);
+    });
+
+    it("a PDF linked with notes is a dot too, with lines for its links both ways", async () => {
+      const graph = await openGraph();
+
+      await vi.waitFor(() => expect(dots(graph)).toContain("attention"));
+      expect(graph.querySelectorAll("line")).toHaveLength(2);
+    });
+
+    it("looks different from a note (a square, not a circle)", async () => {
+      const graph = await openGraph();
+      await vi.waitFor(() => expect(dots(graph)).toContain("attention"));
+
+      const pdf = within(graph).getByRole("button", { name: "attention" });
+      expect(pdf.querySelector("rect")).toBeInTheDocument();
+      expect(pdf.querySelector("circle")).not.toBeInTheDocument();
+    });
+
+    it("a PDF nothing is linked with isn't shown, so a folder of papers doesn't crowd it", async () => {
+      const graph = await openGraph();
+      await vi.waitFor(() => expect(dots(graph)).toContain("attention"));
+
+      expect(dots(graph)).not.toContain("unread");
+    });
+
+    it("clicking a PDF opens it in the reader, without making a note", async () => {
+      vi.mocked(api.readWorkspaceFile).mockReturnValue(new Promise(() => {}));
+      const graph = await openGraph();
+      await vi.waitFor(() => expect(dots(graph)).toContain("attention"));
+
+      await userEvent.click(within(graph).getByRole("button", { name: "attention" }));
+
+      expect(await screen.findByRole("toolbar", { name: "PDF" })).toBeInTheDocument();
+      expect(api.createNoteAt).not.toHaveBeenCalled();
+    });
+  });
+
   it("the command palette can open it too", async () => {
     render(<App />);
     await screen.findByText("Paper.typ");

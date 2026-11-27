@@ -1,5 +1,6 @@
 // Links, like Obsidian's. Typing [[ lists the workspace's files at the cursor (notes, PDFs, any
-// file); choosing one writes a plain link to it, showing its name: `#link("Ideas.md")[Ideas]` in
+// file), and, as words are typed, the Zotero library's papers with a PDF (by title, authors or
+// year; linked as `zotero:<paper id>`, showing the title); choosing one writes a plain link to it, showing its name: `#link("Ideas.md")[Ideas]` in
 // Typst, `[Ideas](Ideas.md)` in Markdown, the path starting from the note's own folder (so the
 // links work in other apps too). A name no file has yet links to a new note. Clicking a link
 // follows it (⌘-click: in a new pane): a note opens (created first if it doesn't exist yet), and
@@ -17,6 +18,7 @@ import { Decoration, type DecorationSet, EditorView, keymap, ViewPlugin, type Vi
 import * as api from "../api";
 import type { FileEntry } from "../api";
 import { fuzzyScore } from "../ui/fuzzy";
+import { fileScore } from "../pdf/NotePicker";
 import { openPdf } from "../workspace/pdf";
 import { findFormatting, type Format, noteFormat, type Range } from "./formatting";
 import { CARD_TYPE, type Dragged, writePart } from "../board/board";
@@ -67,6 +69,8 @@ export function registerNoteEditor(path: string, view: EditorView) {
 
 /** The workspace's notes (their paths). */
 export const workspaceNotes = () => workspaceFiles.filter((path) => noteFormat(path));
+/** The workspace's PDFs (paths). */
+export const workspacePdfs = () => workspaceFiles.filter((path) => /\.pdf$/i.test(path));
 
 /** Whether a note is open in an editor. */
 export const isOpenInEditor = (path: string) => openEditors.has(path);
@@ -74,13 +78,30 @@ export const isOpenInEditor = (path: string) => openEditors.has(path);
 /** A note's text: as it is in its editor, if it's open. */
 export const textOf = async (path: string) => openEditors.get(path)?.state.doc.toString() ?? (await api.readNote(path));
 
-/** A PDF's number of pages (each PDF is opened once). */
+/** The Zotero library's papers with a PDF, for the [[ list: read once (and again after Zotero changes, see `forgetZoteroPapers`). */
+let zoteroPapers: Promise<api.ZoteroItem[]> | null = null;
+const papersWithPdf = () =>
+  (zoteroPapers ??= api.zoteroLibrary().then(
+    (library) => {
+      const papers = new Map<string, api.ZoteroItem>();
+      for (const paper of library?.libraries.flatMap((l) => l.items) ?? []) if (paper.pdf) papers.set(paper.id, paper);
+      return [...papers.values()];
+    },
+    () => [],
+  ));
+/** Zotero changed (a paper added, or renamed): its papers are read again for the next [[. */
+export function forgetZoteroPapers() {
+  zoteroPapers = null;
+}
+/** What a link to a Zotero paper shows: its title. */
+const paperTitle = async (target: string) => (await papersWithPdf()).find((p) => `zotero:${p.id}` === target)?.title;
+
+/** A PDF's number of pages (each PDF is opened once): the workspace's, or a Zotero paper's. */
 const pageCounts = new Map<string, Promise<number>>();
 function pagesOf(path: string) {
   let count = pageCounts.get(path);
   if (!count) {
-    count = api
-      .readWorkspaceFile(path)
+    count = (path.startsWith("zotero:") ? api.readZoteroPdf(path.slice("zotero:".length)) : api.readWorkspaceFile(path))
       .then(openPdf)
       .then((pdf) => {
         const pages = pdf.pages;
@@ -133,6 +154,24 @@ export function copyLinkTo(view: EditorView, format: Format, part: Range & { kin
   const { anchor, change } = anchorFor(view.state.doc.toString(), format, part);
   if (change) view.dispatch({ changes: { from: change.from, insert: change.insert }, userEvent: "input" });
   copyAddress(`${view.state.facet(notePath)}#${anchor}`);
+}
+
+/**
+ * What was copied last to be pasted in notes, and how it's written in a note (from the note's
+ * folder, in its format): pasted as that rather than as the text copied.
+ */
+let copiedCode: { text: string; write: (note: string, format: Format) => string } | null = null;
+
+/**
+ * Copies code for notes (`text`: as it's written from the top of the workspace, in Typst, for
+ * other apps), and says so; pasted in a note, it's written for that note.
+ */
+export function copyCode(text: string, write: (note: string, format: Format) => string, message: string) {
+  copiedCode = { text, write };
+  navigator.clipboard?.writeText(text).then(
+    () => reportCopied?.(message),
+    () => reportCopied?.("Couldn't copy it."),
+  );
 }
 
 /** Copies a file's address (with its part); it's pasted into a note as a link. */
@@ -191,16 +230,32 @@ export const typstText = (text: string) => text.replace(/[\\[\]*_#$@<>`~]/g, (ch
 const markdownText = (text: string) => text.replace(/[\\[\]*_`]/g, (char) => `\\${char}`);
 
 /** A link to a file (`target`, a workspace path; maybe a `part` of it) from a note, showing the file's name. */
-export function linkCode(from: string, target: string, format: Format, part?: string) {
+export function linkCode(from: string, target: string, format: Format, part?: string, label?: string) {
   const address = relativePath(from, target);
   // (Underscores, common in file names, show as spaces.)
-  const name = stemOf(target).replace(/_+/g, " ").trim() || stemOf(target);
+  const name = label ?? (stemOf(target).replace(/_+/g, " ").trim() || stemOf(target));
   if (format === "markdown") {
     const fragment = part ? `#${encodeURIComponent(part).replace(/%5E/gi, "^").replace(/%3D/gi, "=")}` : "";
-    return `[${markdownText(name)}](${address.split("/").map(encodeURIComponent).join("/")}${fragment})`;
+    // (A Zotero paper's address as it is: `zotero:<paper id>`.)
+    const written = address.startsWith("zotero:") ? address : address.split("/").map(encodeURIComponent).join("/");
+    return `[${markdownText(name)}](${written}${fragment})`;
   }
   const quoted = (part ? `${address}#${part}` : address).replace(/[\\"]/g, (char) => `\\${char}`);
   return `#link("${quoted}")[${typstText(name)}]`;
+}
+
+/**
+ * A workspace file's address (`Papers/attention.pdf#page=3`, from the top of the workspace, as
+ * copied) as written in a note: from the note's folder, in its format (Markdown writes spaces in
+ * paths as %20). Null if it isn't a file in the workspace.
+ */
+export function addressFrom(note: string, typed: string, format: Format) {
+  const at = typed.indexOf("#");
+  const path = at < 0 ? typed : typed.slice(0, at);
+  const fragment = at < 0 ? "" : typed.slice(at);
+  if (!workspaceFiles.includes(path)) return null;
+  const address = relativePath(note, path);
+  return `${format === "markdown" ? address.split("/").map(encodeURIComponent).join("/") : address}${fragment}`;
 }
 
 /** The part of a file an address names (after the #), if any. */
@@ -217,7 +272,7 @@ export function partOf(address: string, decode: boolean) {
 
 /** A file in the workspace with that name ("attention", "attention.pdf") or path, if there's one. */
 function fileNamed(from: string, name: string) {
-  if (workspaceFiles.includes(name)) return name;
+  if (workspaceFiles.includes(name) || name.startsWith("zotero:")) return name;
   const wanted = name.toLowerCase();
   const named = workspaceFiles.filter((path) => stemOf(path).toLowerCase() === wanted || nameOf(path).toLowerCase() === wanted);
   const here = folderOf(from).join("/");
@@ -325,10 +380,10 @@ export function noteLinkSource(format: Format): CompletionSource {
     const from = context.state.facet(notePath);
     const query = typed.text.slice(2);
     if (query.includes("#")) return partOptions(context, format, typed.from, query);
-    const apply = (target: string) => (view: EditorView, _completion: Completion, start: number, end: number) => {
+    const apply = (target: string, label?: string) => (view: EditorView, _completion: Completion, start: number, end: number) => {
       // Brackets closed for the [[ as they were typed go too.
       const closing = /^\]{0,2}/.exec(view.state.sliceDoc(end, end + 2))![0].length;
-      const code = linkCode(from, target, format);
+      const code = linkCode(from, target, format, undefined, label);
       view.dispatch({
         changes: { from: start - 2, to: end + closing, insert: code },
         selection: { anchor: start - 2 + code.length },
@@ -358,7 +413,32 @@ export function noteLinkSource(format: Format): CompletionSource {
       const target = [...folder, `${name}.${format === "typst" ? "typ" : "md"}`].join("/");
       options.push({ label: `New note “${name}”`, type: "note-new", boost: -options.length - 1, apply: apply(target) });
     }
-    return { from: typed.from + 2, filter: false, options };
+    const result = { from: typed.from + 2, filter: false, options };
+    if (!name) return result;
+    // Zotero's papers too, once words are typed, after the workspace's files (and before a new note).
+    return papersWithPdf().then((papers) => {
+      const found = papers
+        .map((paper) => ({
+          paper,
+          score: fileScore(
+            { path: paper.id, label: paper.title, title: paper.title, words: `${paper.title} ${paper.authors.join(" ")} ${paper.year ?? ""}`, authors: paper.authors, year: paper.year },
+            name,
+          ),
+        }))
+        .filter((match): match is { paper: api.ZoteroItem; score: number } => match.score !== null)
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 20)
+        .map(({ paper }): FileOption => ({
+          label: paper.title,
+          detail: [paper.authors.join(", "), paper.year].filter(Boolean).join(" ") || undefined,
+          type: "paper",
+          apply: apply(`zotero:${paper.id}`, paper.title),
+          path: `zotero:${paper.id}`,
+        }));
+      const files = options.filter((o) => o.type !== "note-new");
+      const all = [...files, ...found, ...options.filter((o) => o.type === "note-new")].map((o, i) => ({ ...o, boost: -i }));
+      return { ...result, options: all };
+    });
   };
 }
 
@@ -373,14 +453,16 @@ async function partOptions(context: CompletionContext, format: Format, start: nu
   if (!target) return null;
   const wanted = query.slice(hash + 1);
   const partFrom = start + 2 + hash + 1;
+  // (A Zotero paper's link shows its title.)
+  const label = target.startsWith("zotero:") ? await paperTitle(target) : undefined;
   const write = (view: EditorView, end: number, part: string, extra?: { from: number; insert: string }) => {
     const closing = /^\]{0,2}/.exec(view.state.sliceDoc(end, end + 2))![0].length;
-    const code = linkCode(from, target, format, part);
+    const code = linkCode(from, target, format, part, label);
     const changes = view.state.changes([{ from: start, to: end + closing, insert: code }, ...(extra ? [extra] : [])]);
     view.dispatch({ changes, selection: { anchor: changes.mapPos(end + closing, 1) }, userEvent: "input.complete" });
   };
 
-  if (target.toLowerCase().endsWith(".pdf")) {
+  if (target.toLowerCase().endsWith(".pdf") || target.startsWith("zotero:")) {
     const pages = await pagesOf(target).catch(() => 0);
     const options = Array.from({ length: pages }, (_, i) => i + 1)
       .filter((page) => String(page).startsWith(wanted.trim()))
@@ -655,6 +737,13 @@ function followClicks(format: Format) {
     // A copied link (a workspace file's address with a part, like `Paper.typ#methods`) is pasted as a link.
     paste(event, view) {
       const pasted = event.clipboardData?.getData("text/plain")?.trim();
+      // (Code copied for notes, like a PDF's passage as a footnote: written for this note.)
+      if (pasted && copiedCode && pasted === copiedCode.text.trim()) {
+        event.preventDefault();
+        const code = copiedCode.write(view.state.facet(notePath), format);
+        view.dispatch(view.state.replaceSelection(code), { userEvent: "input.paste" });
+        return true;
+      }
       const found = pasted ? /^([^\s#][^#\n]*)#([^\s#]+)$/.exec(pasted) : null;
       if (!found || !workspaceFiles.includes(found[1])) return false;
       event.preventDefault();
